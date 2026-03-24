@@ -1582,14 +1582,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         })()}
 
                         <button
-                          onClick={() => { setGridPopover(null); setActiveTab("weekly"); }}
+                          onClick={() => { setGridPopover(null); setActiveTab("camps"); }}
                           style={{
                             marginTop: 14, width: "100%", background: "#3D6B1F", color: "white",
                             border: "none", borderRadius: 8, padding: "9px 0",
                             fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13,
                             cursor: "pointer",
                           }}
-                        >View in Weekly Schedule →</button>
+                        >View Full Camp Details →</button>
                       </div>
                     </div>
                   </div>
