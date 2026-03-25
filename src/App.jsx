@@ -179,11 +179,14 @@ export default function Camplify() {
   // Enrollment details modal (days + care selection when adding kid to camp)
   const [enrollModal, setEnrollModal] = useState(null); // { campId, kidId, status }
   const [enrollDays, setEnrollDays] = useState([]);
+  const [enrollWeeks, setEnrollWeeks] = useState([]);
   const [enrollBeforeCare, setEnrollBeforeCare] = useState(false);
   const [enrollAfterCare, setEnrollAfterCare] = useState(false);
   const openEnrollModal = (campId, kidId, status, campDays) => {
+    const camp = [...camps, ...dynamicCamps].find(c => c.id === campId);
     setEnrollModal({ campId, kidId, status });
     setEnrollDays(campDays || ["M","T","W","Th","F"]);
+    setEnrollWeeks(camp?.weekRange || (camp ? [camp.week] : []));
     setEnrollBeforeCare(false);
     setEnrollAfterCare(false);
   };
@@ -192,6 +195,7 @@ export default function Camplify() {
     setEnrollmentDetails(enrollModal.campId, enrollModal.kidId, {
       status: enrollModal.status,
       days: enrollDays,
+      weeks: enrollWeeks,
       beforeCare: enrollBeforeCare,
       afterCare: enrollAfterCare,
     });
@@ -296,7 +300,7 @@ export default function Camplify() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [manualForm, setManualForm] = useState({
     name: "", dateStart: "", dateEnd: "", location: "", address: "",
-    hours: "", beforeCare: "", afterCare: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", cost: "", campType: "",
+    timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "",
   });
   const updateForm = (field, val) => {
     setManualForm(prev => ({ ...prev, [field]: val }));
@@ -373,21 +377,23 @@ export default function Camplify() {
       dates,
       location: manualForm.location,
       address: manualForm.address,
-      hours: manualForm.hours,
-      beforeCare: manualForm.beforeCare,
-      afterCare: manualForm.afterCare,
+      hours: manualForm.timeStart && manualForm.timeEnd ? `${manualForm.timeStart} – ${manualForm.timeEnd}` : "",
+      beforeCare: manualForm.beforeCareStart && manualForm.beforeCareEnd ? `${manualForm.beforeCareStart} – ${manualForm.beforeCareEnd}` : "",
+      afterCare: manualForm.afterCareStart && manualForm.afterCareEnd ? `${manualForm.afterCareStart} – ${manualForm.afterCareEnd}` : "",
       discountCode: manualForm.discountCode,
       notes: manualForm.notes,
       days: manualForm.days.length ? manualForm.days : ["M","T","W","Th","F"],
       week,
-      ageMin: manualForm.ageMin ? parseInt(manualForm.ageMin) : null,
-      ageMax: manualForm.ageMax ? parseInt(manualForm.ageMax) : null,
+      ageMin: manualForm.ageOrGrade === "age" && manualForm.ageMin ? parseInt(manualForm.ageMin) : null,
+      ageMax: manualForm.ageOrGrade === "age" && manualForm.ageMax ? parseInt(manualForm.ageMax) : null,
+      gradeMin: manualForm.ageOrGrade === "grade" ? manualForm.gradeMin : null,
+      gradeMax: manualForm.ageOrGrade === "grade" ? manualForm.gradeMax : null,
       cost: manualForm.cost || null,
       campType: manualForm.campType || null,
     };
     setDynamicCamps(prev => [...prev, newCamp]);
     setCampStatus(prev => ({ ...prev, [id]: { [importKidId]: importStatus } }));
-    setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", hours: "", beforeCare: "", afterCare: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", cost: "", campType: "" });
+    setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
     setImportDone(true);
     setTimeout(() => { setImportDone(false); setActiveTab("weekly"); }, 1800);
   };
@@ -472,6 +478,23 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [friendProfilePopover, setFriendProfilePopover] = useState(null); // { person, x, y }
   const [campTypeFilter, setCampTypeFilter] = useState(new Set());
   const [campSort, setCampSort] = useState("date");
+  const [focusedCampId, setFocusedCampId] = useState(null);
+  const [expandedCampId, setExpandedCampId] = useState(null);
+  const [campReviews, setCampReviews] = useState({
+    // Sample reviews from circle members — keyed by campId
+    1: [
+      { id: 1, authorName: "Maya Chen", authorChild: "Sophie", circleIds: [1], rating: 5, text: "Sophie absolutely loved this camp. The counselors were incredible and she made so many new friends. Would highly recommend!", date: "2025-08-10" },
+      { id: 2, authorName: "Lisa Nguyen", authorChild: "Mia", circleIds: [3], rating: 4, text: "Great experience overall. Pickup can get a bit chaotic but the program itself is fantastic.", date: "2025-08-12" },
+    ],
+    3: [
+      { id: 3, authorName: "James Park", authorChild: "Oliver", circleIds: [1], rating: 5, text: "Oliver came home every day bursting with excitement about what he made. The animation project at the end was amazing.", date: "2025-08-15" },
+    ],
+    6: [
+      { id: 4, authorName: "Sarah Kim", authorChild: "Nora", circleIds: [2], rating: 4, text: "Nora had a wonderful time. The instructors are very experienced and patient with kids.", date: "2025-08-20" },
+    ],
+  });
+  const [reviewDraft, setReviewDraft] = useState({}); // { [campId]: { rating, text } }
+  const [showReviewForm, setShowReviewForm] = useState(null); // campId
   const [kidProfiles, setKidProfiles] = useState(() =>
     kids.reduce((acc, k) => ({
       ...acc,
@@ -1582,7 +1605,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         })()}
 
                         <button
-                          onClick={() => { setGridPopover(null); setActiveTab("camps"); }}
+                          onClick={() => { setFocusedCampId(gridPopover.camp.id); setExpandedCampId(gridPopover.camp.id); setGridPopover(null); setActiveTab("camps"); }}
                           style={{
                             marginTop: 14, width: "100%", background: "#3D6B1F", color: "white",
                             border: "none", borderRadius: 8, padding: "9px 0",
@@ -1855,116 +1878,318 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     const campWeeks = (camp.weekRange || [camp.week]).map(wn => weeks.find(w => w.num === wn)).filter(Boolean);
                     const friendsHere = circles.flatMap(c => c.members).filter(m => m.camps.includes(camp.id));
                     const typeConf = TYPE_CONFIG[camp.campType];
+                    const isFocused = focusedCampId === camp.id;
+                    const isExpanded = expandedCampId === camp.id;
+                    const myKidsHere = kids.filter(k => campStatus[camp.id]?.[k.id]);
+
                     return (
-                      <div key={camp.id} style={{
-                        background: "white", border: "1px solid #E5E7EB",
-                        borderLeft: `4px solid ${camp.color}`,
-                        borderRadius: "var(--radius-lg)", padding: "14px 16px",
-                        boxShadow: "var(--shadow-sm)",
-                      }}>
-                        {/* Header */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, flexWrap: "wrap" }}>
-                            {camp.url && camp.url !== "#" ? (
-                              <a href={camp.url} target="_blank" rel="noreferrer"
-                                style={{ fontWeight: 700, fontSize: 14, color: "#1F2937", textDecoration: "none" }}
-                                onMouseEnter={e => e.currentTarget.style.color = camp.color}
-                                onMouseLeave={e => e.currentTarget.style.color = "#1F2937"}
-                              >{camp.name}</a>
-                            ) : (
+                      <div key={camp.id}
+                        ref={el => { if (isFocused && el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); setTimeout(() => setFocusedCampId(null), 2000); } }}
+                        style={{
+                          background: "white",
+                          border: isFocused ? `2px solid ${camp.color}` : "1px solid #E5E7EB",
+                          borderLeft: `4px solid ${camp.color}`,
+                          borderRadius: "var(--radius-lg)",
+                          boxShadow: isFocused ? `0 0 0 3px ${camp.color}22, var(--shadow)` : "var(--shadow-sm)",
+                          transition: "box-shadow 0.3s, border 0.3s",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {/* Clickable summary row */}
+                        <div
+                          onClick={() => setExpandedCampId(isExpanded ? null : camp.id)}
+                          style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {/* Name + type badge */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
                               <span style={{ fontWeight: 700, fontSize: 14, color: "#1F2937" }}>{camp.name}</span>
-                            )}
-                            {typeConf && (
-                              <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, padding: "1px 7px" }}>
-                                {typeConf.emoji} {typeConf.label}
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => {
-                              const kidToAdd = kids.find(k => !campStatus[camp.id]?.[k.id]) || kids[0];
-                              openEnrollModal(camp.id, kidToAdd.id, "enrolled", camp.days);
-                            }}
-                            style={{
-                              background: "#3D6B1F", border: "none", borderRadius: 7,
-                              width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center",
-                              cursor: "pointer", flexShrink: 0, transition: "background 0.12s",
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.background = "#2D5016"}
-                            onMouseLeave={e => e.currentTarget.style.background = "#3D6B1F"}
-                            title="Add a kid to this camp"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                            </svg>
-                          </button>
-                        </div>
-
-                        {/* Meta */}
-                        <div style={{ fontSize: 12, color: "#9CA3AF", display: "flex", flexWrap: "wrap", gap: "2px 8px", marginBottom: 12 }}>
-                          <span>{camp.dates}</span>
-                          <span>·</span>
-                          <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(camp.address || camp.location)}`} target="_blank" rel="noreferrer" style={{ color: "#9CA3AF", textDecoration: "none" }} onMouseEnter={e => e.currentTarget.style.textDecoration="underline"} onMouseLeave={e => e.currentTarget.style.textDecoration="none"}>{camp.location}</a>
-                          <span>·</span>
-                          <span>{camp.hours}</span>
-                          {camp.days?.length < 5 && <><span>·</span><span>{camp.days.join(", ")}</span></>}
-                          {(camp.ageMin || camp.ageMax) && <><span>·</span><span>Ages {camp.ageMin && camp.ageMax ? `${camp.ageMin}–${camp.ageMax}` : camp.ageMin ? `${camp.ageMin}+` : `≤${camp.ageMax}`}</span></>}
-                          {camp.cost && <><span>·</span><span style={{ color: "#3D6B1F", fontWeight: 600 }}>${Number(camp.cost).toLocaleString()}</span></>}
-                        </div>
-
-                        {/* Per-week enrollment: overlapping avatars */}
-                        {(() => {
-                          const bffCircle = circles.find(c => c.name === "BFFs");
-                          const bffMemberIds = new Set(bffCircle ? bffCircle.members.map(m => m.id) : []);
-
-                          // My kids with real enrollment status
-                          const myKidMembers = kids.map(k => {
-                            const s = campStatus[camp.id]?.[k.id];
-                            const status = s ? (typeof s === "string" ? s : s?.status) : null;
-                            if (!status) return null;
-                            return {
-                              id: `kid-${k.id}`, name: k.name, child: k.name,
-                              initials: k.initials, isMyKid: true,
-                              status, isBff: false,
-                            };
-                          }).filter(Boolean);
-
-                          // Friends across all circles
-                          const friendMembers = circles.flatMap(c => c.members.map(m => ({
-                            ...m, circleColor: c.color, isBff: bffMemberIds.has(m.id),
-                            status: m.id % 3 === 0 ? "waitlist" : m.id % 3 === 2 ? "thinking" : "enrolled",
-                          }))).filter(m => m.camps.includes(camp.id));
-
-                          // Merge: enrolled first, then thinking, then waitlisted; within status: my kids first, then BFFs, then others
-                          const statusOrder = { enrolled: 0, thinking: 1, waitlist: 2 };
-                          const allMembers = [...myKidMembers, ...friendMembers].sort((a, b) => {
-                            const sd = (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
-                            if (sd !== 0) return sd;
-                            if (a.isMyKid !== b.isMyKid) return a.isMyKid ? -1 : 1;
-                            return (b.isBff ? 1 : 0) - (a.isBff ? 1 : 0);
-                          });
-
-                          if (allMembers.length === 0 && campWeeks.length <= 1) return null;
-
-                          const SHOW = AVATAR_SHOW;
-
-                          return (
-                            <div style={{ display: "flex", alignItems: "flex-start", gap: 0, overflowX: "auto" }}>
-                              {campWeeks.map((w, wi) => (
-                                <div key={w.num} style={{
-                                  flex: "0 0 auto", minWidth: 90,
-                                  borderLeft: wi > 0 ? "1px solid #F3F4F6" : "none",
-                                  paddingLeft: wi > 0 ? 14 : 0, paddingRight: 14,
-                                }}>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6, whiteSpace: "nowrap" }}>
-                                    {w.dates}
-                                  </div>
-                                  <AvatarStack members={allMembers} />
-                                </div>
-                              ))}
+                              {typeConf && (
+                                <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, padding: "1px 7px" }}>
+                                  {typeConf.emoji} {typeConf.label}
+                                </span>
+                              )}
                             </div>
-                          );
-                        })()}
+                            {/* Summary meta */}
+                            <div style={{ fontSize: 12, color: "#9CA3AF", display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
+                              <span>{camp.dates}</span>
+                              <span>·</span>
+                              <span>{camp.location}</span>
+                              <span>·</span>
+                              <span>{camp.hours}</span>
+                              {camp.cost && <><span>·</span><span style={{ color: "#3D6B1F", fontWeight: 600 }}>${Number(camp.cost).toLocaleString()}</span></>}
+                            </div>
+                          </div>
+
+                          {/* My kids status pills */}
+                          <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                            {myKidsHere.map(k => {
+                              const s = campStatus[camp.id]?.[k.id];
+                              const status = typeof s === "string" ? s : s?.status;
+                              const color = status === "enrolled" ? "#3D6B1F" : status === "thinking" ? "#D97706" : "#9CA3AF";
+                              const bg = status === "enrolled" ? "#eef5e8" : status === "thinking" ? "#FEF3C7" : "#F3F4F6";
+                              return (
+                                <span key={k.id} style={{ fontSize: 11, fontWeight: 700, color, background: bg, borderRadius: 6, padding: "2px 7px", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                  <StatusIcon s={status} size={9} color={color} /> {k.name}
+                                </span>
+                              );
+                            })}
+                          </div>
+
+                          {/* Expand chevron */}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                            style={{ flexShrink: 0, transition: "transform 0.2s", transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
+                            <polyline points="6 9 12 15 18 9"/>
+                          </svg>
+                        </div>
+
+                        {/* Expanded full details */}
+                        {isExpanded && (
+                          <div style={{ borderTop: "1px solid #F3F4F6", padding: "16px 16px 20px" }}>
+
+                            {/* Full meta */}
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                              {camp.address && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                                  <div>
+                                    <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(camp.address)}`} target="_blank" rel="noreferrer"
+                                      style={{ fontSize: 12.5, color: "#374151", fontWeight: 500, textDecoration: "none" }}
+                                      onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                                      onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}
+                                    >{camp.location}</a>
+                                    <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{camp.address}</div>
+                                  </div>
+                                </div>
+                              )}
+                              {camp.hours && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                  <span style={{ fontSize: 12.5, color: "#374151", fontWeight: 500 }}>{camp.hours}</span>
+                                </div>
+                              )}
+                              {camp.days && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                  <div style={{ display: "flex", gap: 4 }}>
+                                    {["M","T","W","Th","F"].map(d => (
+                                      <span key={d} style={{
+                                        width: 24, height: 24, borderRadius: 5, display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                        fontSize: 10.5, fontWeight: 700,
+                                        background: camp.days.includes(d) ? camp.color + "22" : "#F3F4F6",
+                                        color: camp.days.includes(d) ? camp.color : "#D1D5DB",
+                                        border: `1px solid ${camp.days.includes(d) ? camp.color + "55" : "#E5E7EB"}`,
+                                      }}>{d}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {(camp.ageMin || camp.ageMax || camp.gradeMin || camp.gradeMax) && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                                  <span style={{ fontSize: 12.5, color: "#374151", fontWeight: 500 }}>
+                                    {camp.gradeMin || camp.gradeMax ? (camp.gradeMin && camp.gradeMax ? `Grades ${camp.gradeMin}–${camp.gradeMax}` : camp.gradeMin ? `Grade ${camp.gradeMin}+` : `Up to ${camp.gradeMax}`) : camp.ageMin && camp.ageMax ? `Ages ${camp.ageMin}–${camp.ageMax}` : camp.ageMin ? `Ages ${camp.ageMin}+` : `Up to age ${camp.ageMax}`}
+                                  </span>
+                                </div>
+                              )}
+                              {camp.cost && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                  <span style={{ fontSize: 12.5, color: "#3D6B1F", fontWeight: 700 }}>${Number(camp.cost).toLocaleString()}</span>
+                                </div>
+                              )}
+                              {camp.url && camp.url !== "#" && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                  <a href={camp.url} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: camp.color, fontWeight: 500, textDecoration: "none" }}
+                                    onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                                    onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}
+                                  >{camp.url.replace(/^https?:\/\//, "")}</a>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Week × enrollments */}
+                            {(() => {
+                              const bffCircle = circles.find(c => c.name === "BFFs");
+                              const bffMemberIds = new Set(bffCircle ? bffCircle.members.map(m => m.id) : []);
+                              const allMembers = circles.flatMap(c => c.members.map(m => ({
+                                ...m, circleColor: c.color, isBff: bffMemberIds.has(m.id),
+                                status: m.id % 3 === 0 ? "waitlist" : m.id % 3 === 2 ? "thinking" : "enrolled",
+                              }))).filter(m => m.camps.includes(camp.id));
+                              const myKidMembers = kids.map(k => {
+                                const s = campStatus[camp.id]?.[k.id];
+                                const status = s ? (typeof s === "string" ? s : s?.status) : null;
+                                if (!status) return null;
+                                return { id: `kid-${k.id}`, name: k.name, child: k.name, initials: k.initials, isMyKid: true, status };
+                              }).filter(Boolean);
+                              const statusOrder = { enrolled: 0, thinking: 1, waitlist: 2 };
+                              const allPeople = [...myKidMembers, ...allMembers].sort((a, b) => (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3));
+                              if (allPeople.length === 0 && campWeeks.length <= 1) return null;
+                              return (
+                                <div>
+                                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Who's going</div>
+                                  <div style={{ display: "flex", gap: 0, overflowX: "auto" }}>
+                                    {campWeeks.map((w, wi) => (
+                                      <div key={w.num} style={{ flex: "0 0 auto", minWidth: 100, borderLeft: wi > 0 ? "1px solid #F3F4F6" : "none", paddingLeft: wi > 0 ? 14 : 0, paddingRight: 14 }}>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6, whiteSpace: "nowrap" }}>{w.dates}</div>
+                                        <AvatarStack members={allPeople} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Action button */}
+                            <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+                              <button
+                                onClick={() => {
+                                  const kidToAdd = kids.find(k => !campStatus[camp.id]?.[k.id]) || kids[0];
+                                  openEnrollModal(camp.id, kidToAdd.id, "enrolled", camp.days);
+                                }}
+                                style={{
+                                  background: "#3D6B1F", border: "none", borderRadius: 8,
+                                  padding: "8px 16px", fontFamily: "Inter, sans-serif",
+                                  fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer",
+                                  display: "flex", alignItems: "center", gap: 6,
+                                }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                Add a kid
+                              </button>
+                              {friendsHere.length > 0 && (
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6B7280" }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                  {friendsHere.map(f => f.child).join(", ")} also going
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Reviews section */}
+                            {(() => {
+                              // Only show reviews from people in shared circles
+                              const myCircleIds = new Set(circles.map(c => c.id));
+                              const visibleReviews = (campReviews[camp.id] || []).filter(r =>
+                                r.circleIds.some(cid => myCircleIds.has(cid))
+                              );
+                              const draft = reviewDraft[camp.id] || { rating: 0, text: "" };
+                              const isWriting = showReviewForm === camp.id;
+
+                              const StarRow = ({ value, onChange }) => (
+                                <div style={{ display: "flex", gap: 2 }}>
+                                  {[1,2,3,4,5].map(n => (
+                                    <button key={n}
+                                      onClick={() => onChange(n)}
+                                      style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 20, lineHeight: 1, color: n <= value ? "#F59E0B" : "#E5E7EB", transition: "color 0.1s" }}
+                                    >★</button>
+                                  ))}
+                                </div>
+                              );
+
+                              return (
+                                <div style={{ borderTop: "1px solid #F3F4F6", marginTop: 16, paddingTop: 16 }}>
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>Circle Reviews</span>
+                                      <span style={{ fontSize: 11, color: "#9CA3AF" }}>Only visible to your circles</span>
+                                    </div>
+                                    {!isWriting && (
+                                      <button
+                                        onClick={() => setShowReviewForm(camp.id)}
+                                        style={{
+                                          background: "none", border: "1.5px solid #E5E7EB", borderRadius: 7,
+                                          padding: "4px 10px", fontFamily: "Inter, sans-serif",
+                                          fontSize: 12, fontWeight: 600, color: "#374151", cursor: "pointer",
+                                        }}
+                                      >+ Write a review</button>
+                                    )}
+                                  </div>
+
+                                  {/* Write review form */}
+                                  {isWriting && (
+                                    <div style={{ background: "#F9FAFB", borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: "1px solid #E5E7EB" }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Your review</div>
+                                      <StarRow value={draft.rating} onChange={v => setReviewDraft(prev => ({ ...prev, [camp.id]: { ...draft, rating: v } }))} />
+                                      <textarea
+                                        placeholder="What did your kid think? Any tips for other parents..."
+                                        value={draft.text}
+                                        onChange={e => setReviewDraft(prev => ({ ...prev, [camp.id]: { ...draft, text: e.target.value } }))}
+                                        rows={3}
+                                        style={{
+                                          width: "100%", marginTop: 8, padding: "8px 10px",
+                                          border: "1.5px solid #E5E7EB", borderRadius: 7,
+                                          fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937",
+                                          resize: "vertical", outline: "none", boxSizing: "border-box",
+                                        }}
+                                        onFocus={e => e.target.style.borderColor = "#3D6B1F"}
+                                        onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+                                      />
+                                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                        <button
+                                          disabled={!draft.rating || !draft.text.trim()}
+                                          onClick={() => {
+                                            if (!draft.rating || !draft.text.trim()) return;
+                                            const newReview = {
+                                              id: Date.now(), authorName: "You", authorChild: kids[0]?.name,
+                                              circleIds: circles.map(c => c.id),
+                                              rating: draft.rating, text: draft.text.trim(),
+                                              date: new Date().toISOString().slice(0, 10),
+                                            };
+                                            setCampReviews(prev => ({ ...prev, [camp.id]: [newReview, ...(prev[camp.id] || [])] }));
+                                            setReviewDraft(prev => ({ ...prev, [camp.id]: { rating: 0, text: "" } }));
+                                            setShowReviewForm(null);
+                                          }}
+                                          style={{
+                                            background: "#3D6B1F", border: "none", borderRadius: 7,
+                                            padding: "6px 14px", fontFamily: "Inter, sans-serif",
+                                            fontSize: 12, fontWeight: 700, color: "white",
+                                            cursor: draft.rating && draft.text.trim() ? "pointer" : "not-allowed",
+                                            opacity: draft.rating && draft.text.trim() ? 1 : 0.4,
+                                          }}
+                                        >Post review</button>
+                                        <button
+                                          onClick={() => setShowReviewForm(null)}
+                                          style={{ background: "none", border: "none", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#9CA3AF", cursor: "pointer" }}
+                                        >Cancel</button>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Existing reviews */}
+                                  {visibleReviews.length === 0 && !isWriting ? (
+                                    <div style={{ fontSize: 12.5, color: "#9CA3AF", fontStyle: "italic", textAlign: "center", padding: "12px 0" }}>
+                                      No reviews yet from your circles. Be the first!
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                                      {visibleReviews.map(review => (
+                                        <div key={review.id} style={{ borderBottom: "1px solid #F3F4F6", paddingBottom: 12 }}>
+                                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                                            <div style={{ width: 26, height: 26, borderRadius: "50%", background: "#3D6B1F", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>
+                                              {review.authorName[0]}{review.authorName.split(" ")[1]?.[0] || ""}
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#1F2937" }}>
+                                                {review.authorName}
+                                                <span style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 400, marginLeft: 6 }}>parent of {review.authorChild}</span>
+                                              </div>
+                                              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                                <span style={{ color: "#F59E0B", fontSize: 12 }}>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</span>
+                                                <span style={{ fontSize: 10.5, color: "#9CA3AF" }}>{new Date(review.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                          <p style={{ fontSize: 12.5, color: "#374151", lineHeight: 1.6, margin: 0, paddingLeft: 34 }}>{review.text}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -2263,12 +2488,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:"inline",verticalAlign:"middle",marginRight:3,marginBottom:1}}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                                         {camp.hours}
                                       </span>
-                                      {(camp.ageMin || camp.ageMax) && (
+                                      {(camp.ageMin || camp.ageMax || camp.gradeMin || camp.gradeMax) && (
                                         <>
                                           {"  ·  "}
                                           <span style={{ whiteSpace: "nowrap" }}>
                                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:"inline",verticalAlign:"middle",marginRight:3,marginBottom:1}}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                            {camp.ageMin && camp.ageMax ? `Ages ${camp.ageMin}–${camp.ageMax}` : camp.ageMin ? `Ages ${camp.ageMin}+` : `Up to age ${camp.ageMax}`}
+                                            {camp.gradeMin || camp.gradeMax ? (camp.gradeMin && camp.gradeMax ? `Grades ${camp.gradeMin}–${camp.gradeMax}` : camp.gradeMin ? `Grade ${camp.gradeMin}+` : `Up to ${camp.gradeMax}`) : camp.ageMin && camp.ageMax ? `Ages ${camp.ageMin}–${camp.ageMax}` : camp.ageMin ? `Ages ${camp.ageMin}+` : `Up to age ${camp.ageMax}`}
                                           </span>
                                         </>
                                       )}
@@ -3114,58 +3339,157 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           <input className="form-input" placeholder="e.g. 1900 Las Virgenes Rd, Calabasas" value={manualForm.address} onChange={e => updateForm("address", e.target.value)} />
                         </div>
 
-                        <div className="form-field full">
-                          <label className="import-label">Camp Hours</label>
-                          <input className="form-input" placeholder="e.g. 9:00 AM – 3:00 PM" value={manualForm.hours} onChange={e => updateForm("hours", e.target.value)} />
-                        </div>
+                        {/* Camp hours — start and end time dropdowns */}
+                        {(() => {
+                          const TIMES = [];
+                          for (let h = 7; h <= 18; h++) {
+                            for (let m of [0, 30]) {
+                              if (h === 18 && m === 30) continue;
+                              const ampm = h < 12 ? "AM" : "PM";
+                              const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+                              TIMES.push(`${h12}:${m === 0 ? "00" : "30"} ${ampm}`);
+                            }
+                          }
+                          const selectStyle = {
+                            width: "100%", padding: "8px 12px", border: "1.5px solid #E5E7EB",
+                            borderRadius: 8, fontFamily: "Inter, sans-serif", fontSize: 13,
+                            color: "#1F2937", background: "white", outline: "none", cursor: "pointer",
+                            appearance: "none",
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
+                            backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center", paddingRight: 32,
+                          };
+                          return (
+                            <>
+                              <div className="form-field full">
+                                <label className="import-label">Camp Hours</label>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                  <select value={manualForm.timeStart} onChange={e => updateForm("timeStart", e.target.value)} style={selectStyle}
+                                    onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                    <option value="">Start time</option>
+                                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  <span style={{ color: "#9CA3AF", fontSize: 13, flexShrink: 0 }}>to</span>
+                                  <select value={manualForm.timeEnd} onChange={e => updateForm("timeEnd", e.target.value)} style={selectStyle}
+                                    onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                    <option value="">End time</option>
+                                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                </div>
+                              </div>
 
-                        <div className="form-field">
-                          <label className="import-label">Age Range <span className="optional-tag">optional</span></label>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <input
-                              className="form-input"
-                              type="number" min="3" max="18"
-                              placeholder="Min"
-                              value={manualForm.ageMin}
-                              onChange={e => updateForm("ageMin", e.target.value)}
-                              style={{ width: "80px" }}
-                            />
-                            <span style={{ color: "#9CA3AF", fontSize: 13, flexShrink: 0 }}>to</span>
-                            <input
-                              className="form-input"
-                              type="number" min="3" max="18"
-                              placeholder="Max"
-                              value={manualForm.ageMax}
-                              onChange={e => updateForm("ageMax", e.target.value)}
-                              style={{ width: "80px" }}
-                            />
-                            <span style={{ color: "#9CA3AF", fontSize: 13, flexShrink: 0 }}>years old</span>
-                          </div>
-                        </div>
+                              {/* Before care */}
+                              <div className="form-field">
+                                <label className="import-label">Before Care <span className="optional-tag">optional</span></label>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <select value={manualForm.beforeCareStart} onChange={e => updateForm("beforeCareStart", e.target.value)} style={selectStyle}
+                                    onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                    <option value="">Start</option>
+                                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  <span style={{ color: "#9CA3AF", fontSize: 12, flexShrink: 0 }}>–</span>
+                                  <select value={manualForm.beforeCareEnd} onChange={e => updateForm("beforeCareEnd", e.target.value)} style={selectStyle}
+                                    onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                    <option value="">End</option>
+                                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* After care */}
+                              <div className="form-field">
+                                <label className="import-label">After Care <span className="optional-tag">optional</span></label>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <select value={manualForm.afterCareStart} onChange={e => updateForm("afterCareStart", e.target.value)} style={selectStyle}
+                                    onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                    <option value="">Start</option>
+                                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  <span style={{ color: "#9CA3AF", fontSize: 12, flexShrink: 0 }}>–</span>
+                                  <select value={manualForm.afterCareEnd} onChange={e => updateForm("afterCareEnd", e.target.value)} style={selectStyle}
+                                    onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                    <option value="">End</option>
+                                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
+
+                        {/* Age or Grade selector */}
+                        {(() => {
+                          const AGES = Array.from({length: 17}, (_, i) => i + 2); // 2–18
+                          const GRADES = ["Pre-K", "K", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th"];
+                          const selectStyle = {
+                            width: "100%", padding: "8px 12px", border: "1.5px solid #E5E7EB",
+                            borderRadius: 8, fontFamily: "Inter, sans-serif", fontSize: 13,
+                            color: "#1F2937", background: "white", outline: "none", cursor: "pointer",
+                            appearance: "none",
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
+                            backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center", paddingRight: 32,
+                          };
+                          const isAge = manualForm.ageOrGrade === "age";
+                          return (
+                            <div className="form-field full">
+                              <label className="import-label">Age / Grade Range <span className="optional-tag">optional</span></label>
+                              {/* Toggle */}
+                              <div style={{ display: "flex", gap: 0, background: "#F3F4F6", borderRadius: 8, padding: 3, width: "fit-content", marginBottom: 10 }}>
+                                {[["age","By Age"],["grade","By Grade"]].map(([val, lbl]) => (
+                                  <button key={val}
+                                    onClick={() => updateForm("ageOrGrade", val)}
+                                    style={{
+                                      background: manualForm.ageOrGrade === val ? "white" : "transparent",
+                                      border: "none", borderRadius: 6, padding: "5px 14px",
+                                      fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600,
+                                      color: manualForm.ageOrGrade === val ? "#1F2937" : "#9CA3AF",
+                                      cursor: "pointer",
+                                      boxShadow: manualForm.ageOrGrade === val ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                                      transition: "all 0.12s",
+                                    }}
+                                  >{lbl}</button>
+                                ))}
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                {isAge ? (
+                                  <>
+                                    <select value={manualForm.ageMin} onChange={e => updateForm("ageMin", e.target.value)} style={selectStyle}
+                                      onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                      <option value="">Min age</option>
+                                      {AGES.map(a => <option key={a} value={a}>{a} years</option>)}
+                                    </select>
+                                    <span style={{ color: "#9CA3AF", fontSize: 13, flexShrink: 0 }}>to</span>
+                                    <select value={manualForm.ageMax} onChange={e => updateForm("ageMax", e.target.value)} style={selectStyle}
+                                      onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                      <option value="">Max age</option>
+                                      {AGES.map(a => <option key={a} value={a}>{a} years</option>)}
+                                    </select>
+                                  </>
+                                ) : (
+                                  <>
+                                    <select value={manualForm.gradeMin} onChange={e => updateForm("gradeMin", e.target.value)} style={selectStyle}
+                                      onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                      <option value="">Min grade</option>
+                                      {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                                    </select>
+                                    <span style={{ color: "#9CA3AF", fontSize: 13, flexShrink: 0 }}>to</span>
+                                    <select value={manualForm.gradeMax} onChange={e => updateForm("gradeMax", e.target.value)} style={selectStyle}
+                                      onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"}>
+                                      <option value="">Max grade</option>
+                                      {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                                    </select>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         <div className="form-field">
                           <label className="import-label">Cost <span className="optional-tag">optional</span></label>
                           <div style={{ position: "relative" }}>
                             <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF", fontSize: 14, fontWeight: 500, pointerEvents: "none" }}>$</span>
-                            <input
-                              className="form-input"
-                              type="number" min="0" step="1"
-                              placeholder="0"
-                              value={manualForm.cost}
-                              onChange={e => updateForm("cost", e.target.value)}
-                              style={{ paddingLeft: 22 }}
-                            />
+                            <input className="form-input" type="number" min="0" step="1" placeholder="0" value={manualForm.cost} onChange={e => updateForm("cost", e.target.value)} style={{ paddingLeft: 22 }} />
                           </div>
-                        </div>
-
-                        <div className="form-field">
-                          <label className="import-label">Before Care Hours <span className="optional-tag">optional</span></label>
-                          <input className="form-input" placeholder="e.g. 7:30 AM – 9:00 AM" value={manualForm.beforeCare} onChange={e => updateForm("beforeCare", e.target.value)} />
-                        </div>
-
-                        <div className="form-field">
-                          <label className="import-label">After Care Hours <span className="optional-tag">optional</span></label>
-                          <input className="form-input" placeholder="e.g. 3:00 PM – 6:00 PM" value={manualForm.afterCare} onChange={e => updateForm("afterCare", e.target.value)} />
                         </div>
 
                         <div className="form-field full">
@@ -3236,7 +3560,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 <button className="btn-primary" style={{ fontSize: 12, padding: "7px 14px" }} onClick={() => {
                                   setCampStatus(prev => ({ ...prev, [duplicateMatch.id]: { ...(prev[duplicateMatch.id] || {}), [importKidId]: importStatus } }));
                                   setDuplicateMatch(null);
-                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", hours: "", beforeCare: "", afterCare: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", cost: "", campType: "" });
+                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
                                   setImportDone(true);
                                   setTimeout(() => { setImportDone(false); setActiveTab("weekly"); }, 1800);
                                 }}>Join existing camp</button>
@@ -3259,7 +3583,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   const newCamp = { id, color, emoji: "", name: manualForm.name, url: manualForm.url||"", dates, location: manualForm.location, address: manualForm.address, hours: manualForm.hours, beforeCare: manualForm.beforeCare, afterCare: manualForm.afterCare, discountCode: manualForm.discountCode, notes: manualForm.notes, days: manualForm.days.length ? manualForm.days : ["M","T","W","Th","F"], week };
                                   setDynamicCamps(prev => [...prev, newCamp]);
                                   setCampStatus(prev => ({ ...prev, [id]: { [importKidId]: importStatus } }));
-                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", hours: "", beforeCare: "", afterCare: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", cost: "", campType: "" });
+                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
                                   setImportDone(true);
                                   setTimeout(() => { setImportDone(false); setActiveTab("weekly"); }, 1800);
                                 }}>Add anyway</button>
@@ -3421,6 +3745,55 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   </div>
                 </div>
 
+                {/* Weeks selector — only shown for multi-week camps */}
+                {(camp.weekRange || [camp.week]).length > 1 && (() => {
+                  const campAllWeeks = (camp.weekRange || [camp.week]).map(wn => weeks.find(w => w.num === wn)).filter(Boolean);
+                  return (
+                    <div className="modal-section">
+                      <div className="modal-label">Weeks {kid.name} is attending</div>
+                      <div style={{ fontSize: 11.5, color: "#9CA3AF", marginBottom: 8 }}>
+                        This camp runs {campAllWeeks.length} weeks — select which ones
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {campAllWeeks.map(w => {
+                          const selected = enrollWeeks.includes(w.num);
+                          return (
+                            <button key={w.num}
+                              onClick={() => setEnrollWeeks(prev => prev.includes(w.num) ? prev.filter(x => x !== w.num) : [...prev, w.num])}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 10,
+                                padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                                border: `1.5px solid ${selected ? camp.color : "#E5E7EB"}`,
+                                background: selected ? camp.color + "12" : "white",
+                                fontFamily: "Inter, sans-serif", textAlign: "left",
+                                transition: "all 0.12s",
+                              }}
+                            >
+                              <div style={{
+                                width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                                border: `2px solid ${selected ? camp.color : "#D1D5DB"}`,
+                                background: selected ? camp.color : "white",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                              }}>
+                                {selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: selected ? camp.color : "#374151" }}>{w.dates}</div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        onClick={() => setEnrollWeeks(prev => prev.length === campAllWeeks.length ? [] : campAllWeeks.map(w => w.num))}
+                        style={{ marginTop: 6, background: "none", border: "none", fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600, color: camp.color, cursor: "pointer", padding: 0 }}
+                      >
+                        {enrollWeeks.length === campAllWeeks.length ? "Deselect all" : "Select all weeks"}
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Kid's attending days — selectable, constrained to camp days */}
                 <div className="modal-section">
                   <div className="modal-label">Days {kid.name} is attending</div>
@@ -3491,7 +3864,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 </div>
 
                 <div className="modal-footer">
-                  <button className="btn-primary" onClick={confirmEnroll} disabled={enrollDays.length === 0}>
+                  <button className="btn-primary" onClick={confirmEnroll} disabled={enrollDays.length === 0 || ((camp.weekRange||[camp.week]).length > 1 && enrollWeeks.length === 0)}>
                     Add {kid.name}
                   </button>
                   <button className="btn-ghost" onClick={() => setEnrollModal(null)}>Cancel</button>
