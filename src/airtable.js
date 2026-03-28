@@ -4,7 +4,6 @@ const base = new Airtable({
   apiKey: import.meta.env.VITE_AIRTABLE_TOKEN
 }).base(import.meta.env.VITE_AIRTABLE_BASE_ID);
 
-// All Monday-based weeks for summer 2026
 const WEEK_DEFINITIONS = [
   { num: 0, start: '2026-06-08', end: '2026-06-11' },
   { num: 6, start: '2026-06-15', end: '2026-06-18' },
@@ -15,7 +14,6 @@ const WEEK_DEFINITIONS = [
   { num: 5, start: '2026-07-20', end: '2026-07-24' },
 ];
 
-// Find which week numbers a camp spans given its start and end date
 export const getWeekRange = (dateStart, dateEnd) => {
   if (!dateStart) return [1];
   const start = new Date(dateStart + 'T12:00:00');
@@ -85,12 +83,15 @@ export const getCamps = async () => {
   });
 };
 
-export const getKids = async () => {
-  const records = await base('Kids').select().all();
+// Load kids filtered by userId
+export const getKids = async (userId) => {
+  const records = await base('Kids')
+    .select({ filterByFormula: `{UserId} = '${userId}'` })
+    .all();
   return records.map(r => {
     const f = r.fields;
     const name = f.Name || '';
-    const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2);
+    const initials = f.Initials || name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
     return {
       id: r.id,
       name: name,
@@ -103,6 +104,38 @@ export const getKids = async () => {
       camps: [],
     };
   });
+};
+
+// Save a new kid to Airtable
+export const saveKid = async (userId, name, initials) => {
+  const record = await base('Kids').create({
+    Name: name,
+    Initials: initials,
+    UserId: userId,
+  });
+  return {
+    id: record.id,
+    name: record.fields.Name || '',
+    initials: record.fields.Initials || '',
+    age: '',
+    interests: [],
+    zipcode: '',
+    visible: false,
+    bio: '',
+    camps: [],
+  };
+};
+
+// Update kid profile fields
+export const updateKid = async (kidId, fields) => {
+  const airtableFields = {};
+  if (fields.age !== undefined) airtableFields.Age = fields.age ? Number(fields.age) : null;
+  if (fields.initials !== undefined) airtableFields.Initials = fields.initials;
+  if (fields.interests !== undefined) airtableFields.Interests = Array.from(fields.interests);
+  if (fields.zipcode !== undefined) airtableFields.Zipcode = fields.zipcode;
+  if (fields.visible !== undefined) airtableFields.Visible = fields.visible;
+  if (fields.bio !== undefined) airtableFields.Bio = fields.bio;
+  await base('Kids').update(kidId, airtableFields);
 };
 
 export const getEnrollments = async () => {

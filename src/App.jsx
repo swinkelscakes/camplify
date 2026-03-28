@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getCamps } from "./airtable";
+import { getCamps, getKids, saveKid } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -21,10 +21,7 @@ const GOOGLE_FONT = `@import url('https://fonts.googleapis.com/css2?family=Inter
 
 const camps = [];
 
-const kids = [
-  { id: 1, name: "Kingsley", initials: "KK", avatar: "", camps: [] },
-  { id: 2, name: "Lenny",    initials: "LK", avatar: "", camps: [] },
-];
+const kids = [];
 
 const circles = [
   {
@@ -197,20 +194,27 @@ export default function App() {
 function Camplify({ userId, userName, userEmail }) {
   const [activeTab, setActiveTab] = useState("grid");
   const [airtableCamps, setAirtableCamps] = useState([]);
+  const [airtableKids, setAirtableKids] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getCamps()
-      .then(data => {
-        console.log('Loaded camps from Airtable:', data);
-        setAirtableCamps(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('Airtable error:', err);
-        setLoading(false);
-      });
-  }, []);
-  const [loading, setLoading] = useState(true);
+    Promise.all([
+      getCamps(),
+      getKids(userId),
+    ]).then(([campsData, kidsData]) => {
+      console.log('Loaded camps from Airtable:', campsData);
+      console.log('Loaded kids from Airtable:', kidsData);
+      setAirtableCamps(campsData);
+      setAirtableKids(kidsData);
+      setSelectedKids(new Set(kidsData.map(k => k.id)));
+      setProfileKidId(kidsData[0]?.id || null);
+      setImportKidId(kidsData[0]?.id || null);
+      setLoading(false);
+    }).catch(err => {
+      console.error('Airtable error:', err);
+      setLoading(false);
+    });
+  }, [userId]);
   const [selectedWeek, setSelectedWeek] = useState(3);
   const [selectedCircles, setSelectedCircles] = useState(new Set()); // empty = all
   const toggleCircle = (id) => setSelectedCircles(prev => {
@@ -221,7 +225,7 @@ function Camplify({ userId, userName, userEmail }) {
   const [showAddCircle, setShowAddCircle] = useState(false);
   const [newCircleName, setNewCircleName] = useState("");
   const [expandedMember, setExpandedMember] = useState(null);
-  const [selectedKids, setSelectedKids] = useState(new Set(kids.map(k => k.id)));
+  const [selectedKids, setSelectedKids] = useState(new Set());
   const [inviteCircleId, setInviteCircleId] = useState(null);
   // Enrollment details modal (days + care selection when adding kid to camp)
   const [enrollModal, setEnrollModal] = useState(null); // { campId, kidId, status }
@@ -299,22 +303,7 @@ function Camplify({ userId, userName, userEmail }) {
     });
   };
   // campStatus: { [campId]: { [kidId]: "enrolled"|"thinking"|"waitlist" } }
-  const [campStatus, setCampStatus] = useState(() => {
-    const s = {};
-    kids.forEach(kid => {
-      kid.camps.forEach(cid => {
-        if (!s[cid]) s[cid] = {};
-        s[cid][kid.id] = { status: "enrolled", days: null, beforeCare: false, afterCare: false };
-      });
-    });
-    // CH Magic-n-Fun Camp (id:12) — Lenny enrolled Mon–Thu
-    s[12] = { 2: { status: "enrolled", days: ["M","T","W","Th"], beforeCare: false, afterCare: false } };
-    // CH Chess Camp (id:13) — Lenny enrolled Mon–Fri
-    s[13] = { 2: { status: "enrolled", days: ["M","T","W","Th","F"], beforeCare: false, afterCare: false } };
-    // Jr. Clippers (id:14) — Lenny thinking
-    s[14] = { 2: { status: "thinking", days: ["M","T","W","Th"], beforeCare: false, afterCare: false } };
-    return s;
-  });
+  const [campStatus, setCampStatus] = useState({});
   // Helper: get just the status string for a kid at a camp
   const getKidStatus = (campId, kidId) => {
     const entry = campStatus[campId]?.[kidId];
@@ -459,7 +448,7 @@ function Camplify({ userId, userName, userEmail }) {
   const [parsing, setParsing] = useState(false);
   const [parsedCamp, setParsedCamp] = useState(null);
   const [parseError, setParseError] = useState("");
-  const [importKidId, setImportKidId] = useState(kids[0]?.id || null);
+  const [importKidId, setImportKidId] = useState(null);
   const [importStatus, setImportStatus] = useState("enrolled");
   const [importDone, setImportDone] = useState(false);
   const [dynamicCamps, setDynamicCamps] = useState([]);
@@ -467,6 +456,9 @@ function Camplify({ userId, userName, userEmail }) {
 
   // Compute week columns dynamically from all camps
   const computedWeeks = getWeeksFromCamps([...camps, ...airtableCamps, ...dynamicCamps]);
+
+  // Use airtableKids as the source of truth, fall back to empty array
+  const kids = airtableKids;
 
   const nextCampId = () => 1000 + dynamicCamps.length;
 
@@ -546,13 +538,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [campReviews, setCampReviews] = useState({});
   const [reviewDraft, setReviewDraft] = useState({}); // { [campId]: { rating, text } }
   const [showReviewForm, setShowReviewForm] = useState(null); // campId
-  const [kidProfiles, setKidProfiles] = useState(() =>
-    kids.reduce((acc, k) => ({
-      ...acc,
-      [k.id]: { interests: new Set(), zipcode: "", visible: false, age: "", bio: "" }
-    }), {})
-  );
-  const [profileKidId, setProfileKidId] = useState(kids[0]?.id);
+  const [kidProfiles, setKidProfiles] = useState({});
+  const [profileKidId, setProfileKidId] = useState(null);
   const updateKidProfile = (kidId, field, val) =>
     setKidProfiles(prev => ({ ...prev, [kidId]: { ...prev[kidId], [field]: val } }));
 
@@ -2989,36 +2976,105 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             const kidEnrolledCamps = allCampPool.filter(c => campStatus[c.id]?.[profileKidId]);
 
+            if (loading) return (
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#9CA3AF", fontSize: 14 }}>Loading...</div>
+            );
+
             return (
               <div>
-                {/* Kid switcher */}
-                {kids.length > 1 && (
-                  <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-                    {kids.map(k => (
-                      <button key={k.id}
-                        onClick={() => setProfileKidId(k.id)}
+                {/* Kid switcher + add kid */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
+                  {kids.map(k => (
+                    <button key={k.id}
+                      onClick={() => setProfileKidId(k.id)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "8px 16px", borderRadius: 10, cursor: "pointer",
+                        fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14,
+                        border: `2px solid ${profileKidId === k.id ? "#3D6B1F" : "#E5E7EB"}`,
+                        background: profileKidId === k.id ? "#3D6B1F" : "white",
+                        color: profileKidId === k.id ? "white" : "#374151",
+                        transition: "all 0.12s",
+                      }}
+                    >
+                      <div style={{
+                        width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                        background: profileKidId === k.id ? "rgba(255,255,255,0.25)" : "#eef5e8",
+                        color: profileKidId === k.id ? "white" : "#3D6B1F",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 9, fontWeight: 800,
+                      }}>{k.initials}</div>
+                      {k.name}
+                    </button>
+                  ))}
+                  {/* Add a kid button */}
+                  {(() => {
+                    const [addingKid, setAddingKid] = useState(false);
+                    const [newKidName, setNewKidName] = useState("");
+                    const [saving, setSaving] = useState(false);
+                    return addingKid ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          autoFocus
+                          placeholder="Child's name"
+                          value={newKidName}
+                          onChange={e => setNewKidName(e.target.value)}
+                          onKeyDown={async e => {
+                            if (e.key === "Enter" && newKidName.trim() && !saving) {
+                              setSaving(true);
+                              const initials = newKidName.trim().split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+                              const newKid = await saveKid(userId, newKidName.trim(), initials);
+                              setAirtableKids(prev => [...prev, newKid]);
+                              setProfileKidId(newKid.id);
+                              setNewKidName(""); setAddingKid(false); setSaving(false);
+                            }
+                            if (e.key === "Escape") { setNewKidName(""); setAddingKid(false); }
+                          }}
+                          style={{
+                            padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10,
+                            fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600,
+                            color: "#1F2937", outline: "none", width: 160,
+                          }}
+                        />
+                        <button
+                          disabled={!newKidName.trim() || saving}
+                          onClick={async () => {
+                            if (!newKidName.trim() || saving) return;
+                            setSaving(true);
+                            const initials = newKidName.trim().split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+                            const newKid = await saveKid(userId, newKidName.trim(), initials);
+                            setAirtableKids(prev => [...prev, newKid]);
+                            setProfileKidId(newKid.id);
+                            setNewKidName(""); setAddingKid(false); setSaving(false);
+                          }}
+                          style={{
+                            background: "#3D6B1F", border: "none", borderRadius: 10,
+                            padding: "8px 16px", fontFamily: "Inter, sans-serif",
+                            fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer",
+                            opacity: newKidName.trim() ? 1 : 0.4,
+                          }}
+                        >{saving ? "Saving..." : "Add"}</button>
+                        <button onClick={() => { setNewKidName(""); setAddingKid(false); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 14 }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setAddingKid(true)}
                         style={{
-                          display: "flex", alignItems: "center", gap: 8,
+                          display: "flex", alignItems: "center", gap: 6,
                           padding: "8px 16px", borderRadius: 10, cursor: "pointer",
                           fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14,
-                          border: `2px solid ${profileKidId === k.id ? "#3D6B1F" : "#E5E7EB"}`,
-                          background: profileKidId === k.id ? "#3D6B1F" : "white",
-                          color: profileKidId === k.id ? "white" : "#374151",
+                          border: "2px dashed #D1D5DB", background: "white", color: "#9CA3AF",
                           transition: "all 0.12s",
                         }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = "#3D6B1F"; e.currentTarget.style.color = "#3D6B1F"; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = "#D1D5DB"; e.currentTarget.style.color = "#9CA3AF"; }}
                       >
-                        <div style={{
-                          width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                          background: profileKidId === k.id ? "rgba(255,255,255,0.25)" : "#eef5e8",
-                          color: profileKidId === k.id ? "white" : "#3D6B1F",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 9, fontWeight: 800,
-                        }}>{k.initials}</div>
-                        {k.name}
+                        + Add a kid
                       </button>
-                    ))}
-                  </div>
-                )}
+                    );
+                  })()}
+                </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
