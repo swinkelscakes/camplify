@@ -57,15 +57,15 @@ export const getCamps = async () => {
     return {
       id: r.id,
       name: f.Name || '',
-      dateStart: dateStart,
-      dateEnd: dateEnd,
+      dateStart,
+      dateEnd,
       dates: formatDates(dateStart, dateEnd),
       location: f.Location || '',
       address: f.Address || '',
-      hours: hours,
-      beforeCare: beforeCare,
+      hours,
+      beforeCare,
       beforeCareCost: f['BeforeCare Cost'] || null,
-      afterCare: afterCare,
+      afterCare,
       afterCareCost: f['AfterCare Cost'] || null,
       campType: f.Type || '',
       days: f.Days || [],
@@ -77,13 +77,12 @@ export const getCamps = async () => {
       url: f.URL || '',
       color: '#3D6B1F',
       emoji: '',
-      week: week,
-      weekRange: weekRange,
+      week,
+      weekRange,
     };
   });
 };
 
-// Load kids filtered by userId
 export const getKids = async (userId) => {
   const records = await base('Kids')
     .select({ filterByFormula: `{UserId} = '${userId}'` })
@@ -94,8 +93,8 @@ export const getKids = async (userId) => {
     const initials = f.Initials || name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
     return {
       id: r.id,
-      name: name,
-      initials: initials,
+      name,
+      initials,
       age: f.Age || '',
       interests: f.Interests || [],
       zipcode: f.Zipcode || '',
@@ -106,7 +105,6 @@ export const getKids = async (userId) => {
   });
 };
 
-// Save a new kid to Airtable
 export const saveKid = async (userId, name, initials) => {
   const record = await base('Kids').create({
     Name: name,
@@ -126,7 +124,6 @@ export const saveKid = async (userId, name, initials) => {
   };
 };
 
-// Update kid profile fields
 export const updateKid = async (kidId, fields) => {
   const airtableFields = {};
   if (fields.age !== undefined) airtableFields.Age = fields.age ? Number(fields.age) : null;
@@ -138,25 +135,57 @@ export const updateKid = async (kidId, fields) => {
   await base('Kids').update(kidId, airtableFields);
 };
 
-export const getEnrollments = async () => {
-  const records = await base('Enrollments').select().all();
-  return records.map(r => {
-    const f = r.fields;
-    return {
-      id: r.id,
-      kidId: f.Kid ? f.Kid[0] : '',
-      campId: f.Camp ? f.Camp[0] : '',
-      status: f.Status || '',
-      days: f.Days || [],
-    };
-  });
+// Load all enrollments for a list of kid IDs
+export const getEnrollments = async (kidIds) => {
+  if (!kidIds || kidIds.length === 0) return [];
+  try {
+    // Load all enrollments and filter client-side (simpler than complex Airtable formulas)
+    const records = await base('Enrollments').select().all();
+    const kidIdSet = new Set(kidIds);
+    return records
+      .filter(r => r.fields.Kid && kidIdSet.has(r.fields.Kid[0]))
+      .map(r => {
+        const f = r.fields;
+        return {
+          id: r.id,
+          kidId: f.Kid ? f.Kid[0] : '',
+          campId: f.Camp ? f.Camp[0] : '',
+          status: f.Status || '',
+          days: f.Days || [],
+          beforeCare: f.BeforeCare || false,
+          afterCare: f.AfterCare || false,
+        };
+      });
+  } catch (e) {
+    console.error('Error loading enrollments:', e);
+    return [];
+  }
 };
 
-export const saveEnrollment = async (kidId, campId, status, days) => {
-  return base('Enrollments').create({
+// Save a new enrollment
+export const saveEnrollment = async (kidId, campId, status, days, beforeCare, afterCare) => {
+  const record = await base('Enrollments').create({
     Kid: [kidId],
     Camp: [campId],
     Status: status,
-    Days: days,
+    Days: days || [],
+    BeforeCare: beforeCare || false,
+    AfterCare: afterCare || false,
   });
+  return record.id;
+};
+
+// Update an existing enrollment
+export const updateEnrollment = async (enrollmentId, status, days, beforeCare, afterCare) => {
+  await base('Enrollments').update(enrollmentId, {
+    Status: status,
+    Days: days || [],
+    BeforeCare: beforeCare || false,
+    AfterCare: afterCare || false,
+  });
+};
+
+// Delete an enrollment
+export const deleteEnrollment = async (enrollmentId) => {
+  await base('Enrollments').destroy(enrollmentId);
 };

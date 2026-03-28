@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getCamps, getKids, saveKid } from "./airtable";
+import { getCamps, getKids, saveKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -195,20 +195,40 @@ function Camplify({ userId, userName, userEmail }) {
   const [activeTab, setActiveTab] = useState("grid");
   const [airtableCamps, setAirtableCamps] = useState([]);
   const [airtableKids, setAirtableKids] = useState([]);
+  const [enrollmentIds, setEnrollmentIds] = useState({}); // { campId-kidId: airtableRecordId }
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       getCamps(),
       getKids(userId),
-    ]).then(([campsData, kidsData]) => {
-      console.log('Loaded camps from Airtable:', campsData);
-      console.log('Loaded kids from Airtable:', kidsData);
+    ]).then(async ([campsData, kidsData]) => {
       setAirtableCamps(campsData);
       setAirtableKids(kidsData);
       setSelectedKids(new Set(kidsData.map(k => k.id)));
       setProfileKidId(kidsData[0]?.id || null);
       setImportKidId(kidsData[0]?.id || null);
+
+      // Load enrollments for these kids
+      if (kidsData.length > 0) {
+        const enrollments = await getEnrollments(kidsData.map(k => k.id));
+        console.log('Loaded enrollments:', enrollments);
+        const newStatus = {};
+        const newIds = {};
+        enrollments.forEach(e => {
+          if (!e.kidId || !e.campId) return;
+          if (!newStatus[e.campId]) newStatus[e.campId] = {};
+          newStatus[e.campId][e.kidId] = {
+            status: e.status,
+            days: e.days,
+            beforeCare: e.beforeCare,
+            afterCare: e.afterCare,
+          };
+          newIds[e.campId + '-' + e.kidId] = e.id;
+        });
+        setCampStatus(newStatus);
+        setEnrollmentIds(newIds);
+      }
       setLoading(false);
     }).catch(err => {
       console.error('Airtable error:', err);
@@ -563,21 +583,49 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
     };
   };
 
-  const setStatus = (campId, kidId, status) => {
+  const setStatus = async (campId, kidId, status) => {
     setCampStatus(prev => {
       const existing = prev[campId]?.[kidId];
       const details = existing && typeof existing === "object" ? existing : { days: null, beforeCare: false, afterCare: false };
       return { ...prev, [campId]: { ...(prev[campId] || {}), [kidId]: { ...details, status } } };
     });
+    // Save to Airtable
+    const key = campId + '-' + kidId;
+    const existingId = enrollmentIds[key];
+    if (existingId) {
+      const current = campStatus[campId]?.[kidId];
+      const days = current?.days || [];
+      const beforeCare = current?.beforeCare || false;
+      const afterCare = current?.afterCare || false;
+      await updateEnrollment(existingId, status, days, beforeCare, afterCare).catch(console.error);
+    } else {
+      const newId = await saveEnrollment(kidId, campId, status, [], false, false).catch(console.error);
+      if (newId) setEnrollmentIds(prev => ({ ...prev, [key]: newId }));
+    }
   };
-  const setEnrollmentDetails = (campId, kidId, details) => {
+
+  const setEnrollmentDetails = async (campId, kidId, details) => {
     setCampStatus(prev => {
       const existing = prev[campId]?.[kidId];
       const base = existing && typeof existing === "object" ? existing : { status: existing || "enrolled" };
       return { ...prev, [campId]: { ...(prev[campId] || {}), [kidId]: { ...base, ...details } } };
     });
+    // Save to Airtable
+    const key = campId + '-' + kidId;
+    const existingId = enrollmentIds[key];
+    const status = details.status || campStatus[campId]?.[kidId]?.status || "enrolled";
+    const days = details.days || [];
+    const beforeCare = details.beforeCare || false;
+    const afterCare = details.afterCare || false;
+    if (existingId) {
+      await updateEnrollment(existingId, status, days, beforeCare, afterCare).catch(console.error);
+    } else {
+      const newId = await saveEnrollment(kidId, campId, status, days, beforeCare, afterCare).catch(console.error);
+      if (newId) setEnrollmentIds(prev => ({ ...prev, [key]: newId }));
+    }
   };
-  const removeStatus = (campId, kidId) => {
+
+  const removeStatus = async (campId, kidId) => {
     setCampStatus(prev => {
       const next = { ...prev };
       if (next[campId]) {
@@ -586,6 +634,13 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
       }
       return next;
     });
+    // Delete from Airtable
+    const key = campId + '-' + kidId;
+    const existingId = enrollmentIds[key];
+    if (existingId) {
+      await deleteEnrollment(existingId).catch(console.error);
+      setEnrollmentIds(prev => { const next = { ...prev }; delete next[key]; return next; });
+    }
   };
 
   const toggleKid = (id) => {
