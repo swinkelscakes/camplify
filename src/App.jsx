@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getCamps } from "./airtable";
+import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
   pine: "#2D5016",
@@ -17,26 +19,11 @@ const COLORS = {
 
 const GOOGLE_FONT = `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');`;
 
-const camps = [
-  { id: 1, name: "Wilderness Adventure Camp", url: "https://www.wildernessadventurecamp.com", color: "#3D6B1F", emoji: "", dates: "Jun 22–Jul 24", location: "Malibu Creek", address: "1900 Las Virgenes Rd, Calabasas, CA 91302", week: 1, weekRange: [1,2,3,4,5], hours: "9:00 AM – 3:00 PM", days: ["M","T","W","Th","F"], campType: "outdoors" },
-  { id: 2, name: "Ocean Explorers", url: "https://www.oceanexplorers.org", color: "#2C6E8A", emoji: "", dates: "Jun 29–Jul 17", location: "Santa Monica", address: "1550 Pacific Coast Hwy, Santa Monica, CA 90401", week: 2, weekRange: [2,3,4], hours: "8:30 AM – 2:30 PM", days: ["M","T","W","Th","F"], campType: "outdoors" },
-  { id: 3, name: "Art & Animation Studio", url: "https://www.artanimationstudio.com", color: "#9B59B6", emoji: "", dates: "Jul 6–Jul 24", location: "Culver City", address: "9820 Washington Blvd, Culver City, CA 90232", week: 3, weekRange: [3,4,5], hours: "9:00 AM – 4:00 PM", days: ["M","T","W","Th","F"], campType: "art" },
-  { id: 4, name: "Space Science Camp", url: "https://www.spacesciencecamp.org", color: "#2C3E50", emoji: "", dates: "Jul 13–Jul 24", location: "Pasadena", address: "1200 E California Blvd, Pasadena, CA 91125", week: 4, weekRange: [4,5], hours: "8:00 AM – 3:00 PM", days: ["M","W","F"], campType: "stem" },
-  { id: 5, name: "Soccer Stars", url: "https://www.soccerstarscamp.com", color: "#E8A825", emoji: "", dates: "Jul 6–Jul 24", location: "Sherman Oaks", address: "4540 Greendale Ave, Sherman Oaks, CA 91423", week: 3, weekRange: [3,4,5], hours: "9:00 AM – 12:00 PM", days: ["T","Th"], campType: "sports" },
-  { id: 6, name: "Drama & Theater", url: "https://www.dramaandtheatercamp.com", color: "#D4621A", emoji: "", dates: "Jul 6–Jul 24", location: "Studio City", address: "11305 Moorpark St, Studio City, CA 91602", week: 5, weekRange: [3,4,5], hours: "10:00 AM – 4:00 PM", days: ["M","T","W","Th","F"], campType: "drama" },
-  { id: 7, name: "Young Chefs Academy", url: "https://www.youngchefsacademy.com", color: "#E74C3C", emoji: "", dates: "Jun 29–Jul 17", location: "Brentwood", address: "11677 San Vicente Blvd, Brentwood, CA 90049", week: 2, weekRange: [2,3,4], hours: "9:30 AM – 1:30 PM", days: ["M","W","F"], campType: "classic" },
-  { id: 8, name: "Music Makers", url: "https://www.musicmakerscamp.com", color: "#8E44AD", emoji: "", dates: "Jul 13–Jul 24", location: "Hollywood", address: "6752 Hollywood Blvd, Hollywood, CA 90028", week: 4, weekRange: [4,5], hours: "9:00 AM – 3:30 PM", days: ["T","Th"], campType: "music" },
-  { id: 9, name: "Coding for Kids", url: "https://www.codingforkids.com", color: "#1ABC9C", emoji: "", dates: "Jun 22–Jul 17", location: "Encino", address: "16200 Ventura Blvd, Encino, CA 91436", week: 3, weekRange: [1,2,3,4], hours: "9:00 AM – 3:00 PM", days: ["M","T","W","Th","F"], campType: "stem" },
-  { id: 10, name: "Basketball Academy", url: "https://www.basketballacademy.com", color: "#E67E22", emoji: "", dates: "Jun 22–Jul 24", location: "Van Nuys", address: "6262 Van Nuys Blvd, Van Nuys, CA 91401", week: 3, weekRange: [1,2,3,4,5], hours: "8:00 AM – 1:00 PM", days: ["M","W","F"], campType: "sports" },
-  { id: 11, name: "Creative Writing Camp", url: "https://www.creativewritingcamp.com", color: "#C0392B", emoji: "", dates: "Jul 6–Jul 24", location: "Bel Air", address: "1000 Bellagio Rd, Los Angeles, CA 90077", week: 3, weekRange: [3,4,5], hours: "10:00 AM – 2:00 PM", days: ["T","Th"], campType: "classic" },
-  { id: 12, name: "CH Magic-n-Fun Camp", url: "#", color: "#3D6B1F", emoji: "", dates: "Jun 8–11", location: "Studio City", address: "4533 Laurel Canyon Blvd, Studio City, CA 91607", week: 0, weekRange: [0], hours: "8:30 AM – 1:00 PM", days: ["M","T","W","Th"], campType: "classic" },
-  { id: 13, name: "CH Chess Camp", url: "#", color: "#4a7c28", emoji: "", dates: "Jul 13–Jul 24", location: "Studio City", address: "4533 Laurel Canyon Blvd, Studio City, CA 91607", week: 4, weekRange: [4,5], hours: "8:30 AM – 1:00 PM", days: ["M","T","W","Th","F"], campType: "stem" },
-  { id: 14, name: "Jr. Clippers", url: "#", color: "#C8102E", emoji: "", dates: "Jun 15–18", location: "West Hollywood", address: "7600 Beverly Blvd, Los Angeles, CA 90036", week: 6, weekRange: [6], hours: "9:00 AM – 3:00 PM", days: ["M","T","W","Th"], campType: "sports" },
-];
+const camps = [];
 
 const kids = [
-  { id: 1, name: "Kingsley", initials: "KK", avatar: "", camps: [6] },
-  { id: 2, name: "Lenny", initials: "LK", avatar: "", camps: [] },
+  { id: 1, name: "Kingsley", initials: "KK", avatar: "", camps: [] },
+  { id: 2, name: "Lenny",    initials: "LK", avatar: "", camps: [] },
 ];
 
 const circles = [
@@ -45,46 +32,69 @@ const circles = [
     name: "Campbell Hall Kinder",
     emoji: "",
     color: "#3D6B1F",
-    members: [
-      { id: 1, name: "Maya Chen",   avatar: "", child: "Sophie", camps: [1, 2, 7],     profile: { age: "7",  interests: ["art","outdoors"], zipcode: "90210", visible: true,  bio: "Loves painting and hiking!" } },
-      { id: 2, name: "James Park",  avatar: "", child: "Oliver", camps: [1, 3, 5],     profile: { age: "8",  interests: ["sports","stem"],   zipcode: "90046", visible: true,  bio: "" } },
-      { id: 3, name: "Priya Sharma",avatar: "", child: "Aria",   camps: [2, 4, 6],     profile: { age: "7",  interests: ["drama","music"],   zipcode: "90036", visible: false, bio: "" } },
-      { id: 4, name: "Tom Walsh",   avatar: "", child: "Leo",    camps: [3, 5, 8, 11], profile: { age: "9",  interests: ["classic","sports"]  ,zipcode: "90028", visible: true,  bio: "Big soccer fan." } },
-    ],
+    members: [],
   },
   {
     id: 2,
     name: "Oaks Parents",
     emoji: "",
     color: "#2C6E8A",
-    members: [
-      { id: 5, name: "Sarah Kim",   avatar: "", child: "Nora",  camps: [1, 4, 8],     profile: { age: "8",  interests: ["music","academics"], zipcode: "90025", visible: true,  bio: "" } },
-      { id: 6, name: "Mike Torres", avatar: "", child: "Diego", camps: [2, 6, 7],     profile: { age: "10", interests: ["sports","outdoors"],  zipcode: "90064", visible: false, bio: "" } },
-    ],
+    members: [],
   },
   {
     id: 3,
     name: "BFFs",
     emoji: "",
     color: "#E8A825",
-    members: [
-      { id: 7, name: "Lisa Nguyen", avatar: "", child: "Mia",   camps: [1, 3, 5, 7, 9], profile: { age: "7",  interests: ["art","drama","music"], zipcode: "90210", visible: true,  bio: "Creative spirit ✨" } },
-      { id: 8, name: "Chris Lee",   avatar: "", child: "Ethan", camps: [2, 4, 6, 10],   profile: { age: "9",  interests: ["stem","sports"],      zipcode: "90046", visible: true,  bio: "" } },
-    ],
+    members: [],
   },
 ];
 
-const weeks = [
-  { num: 0, label: "Early June", dates: "Jun 8–11",     monday: "Jun 8" },
-  { num: 6, label: "Mid June",   dates: "Jun 15–18",    monday: "Jun 15" },
-  { num: 1, label: "Week 1",     dates: "Jun 22–26",    monday: "Jun 22" },
-  { num: 2, label: "Week 2",     dates: "Jun 29–Jul 3", monday: "Jun 29" },
-  { num: 3, label: "Week 3",     dates: "Jul 6–10",     monday: "Jul 6" },
-  { num: 4, label: "Week 4",     dates: "Jul 13–17",    monday: "Jul 13" },
-  { num: 5, label: "Week 5",     dates: "Jul 20–24",    monday: "Jul 20" },
-];
+// weeks array is computed dynamically from camp dates in the app
+// See getWeeksFromCamps() below
+const weeks = [];
 
 const CAMP_COLORS = ["#3D6B1F","#2C6E8A","#9B59B6","#2C3E50","#E8A825","#D4621A","#E74C3C","#8E44AD","#1ABC9C","#E67E22"];
+
+// Generate week columns dynamically from a pool of camps
+const getWeeksFromCamps = (campPool) => {
+  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const mondaySet = new Map(); // iso string -> week object
+  campPool.forEach(camp => {
+    const start = camp.dateStart ? new Date(camp.dateStart + "T12:00:00") : null;
+    const end = camp.dateEnd ? new Date(camp.dateEnd + "T12:00:00") : start;
+    if (!start) return;
+    // Walk through each week the camp covers
+    const cur = new Date(start);
+    // Rewind to Monday of start week
+    const dow = cur.getDay();
+    cur.setDate(cur.getDate() - (dow === 0 ? 6 : dow - 1));
+    while (cur <= end) {
+      const iso = cur.toISOString().slice(0, 10);
+      if (!mondaySet.has(iso)) {
+        const friday = new Date(cur);
+        friday.setDate(friday.getDate() + 4);
+        mondaySet.set(iso, {
+          num: iso, // use ISO date string as the "num" key
+          dates: fmt(cur) + "–" + fmt(friday),
+          monday: fmt(cur),
+          dateStart: iso,
+          dateEnd: friday.toISOString().slice(0, 10),
+        });
+      }
+      cur.setDate(cur.getDate() + 7);
+    }
+  });
+  return Array.from(mondaySet.values()).sort((a, b) => a.num.localeCompare(b.num));
+};
+
+// Check if a camp runs during a given week (by ISO monday date)
+const campInWeek = (camp, weekIso) => {
+  if (!camp.dateStart) return camp.week === weekIso;
+  const wStart = weekIso;
+  const wEnd = (() => { const d = new Date(weekIso + "T12:00:00"); d.setDate(d.getDate() + 6); return d.toISOString().slice(0, 10); })();
+  return camp.dateStart <= wEnd && (camp.dateEnd || camp.dateStart) >= wStart;
+};
 const STATUS_CONFIG = {
   enrolled: { label: "Enrolled", bg: "#5a8f35", light: "#eef5e8" },
   thinking:  { label: "Interested", bg: "#D97706", light: "#FEF3C7" },
@@ -162,8 +172,45 @@ const AvatarStack = ({ members }) => {
   );
 };
 
-export default function Camplify() {
+export default function App() {
+  const { isSignedIn, isLoaded, user } = useUser();
+
+  if (!isLoaded) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB" }}>
+      <div style={{ fontSize: 14, color: "#9CA3AF", fontFamily: "Inter, sans-serif" }}>Loading...</div>
+    </div>
+  );
+
+  if (!isSignedIn) return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#F9FAFB", gap: 32 }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px", marginBottom: 8 }}>Camplify</div>
+        <div style={{ fontSize: 15, color: "#6B7280", fontFamily: "Inter, sans-serif" }}>Plan your summer camps with your parent community</div>
+      </div>
+      <SignIn routing="hash" />
+    </div>
+  );
+
+  return <Camplify userId={user.id} userName={user.firstName || user.fullName || "Parent"} userEmail={user.primaryEmailAddress?.emailAddress} />;
+}
+
+function Camplify({ userId, userName, userEmail }) {
   const [activeTab, setActiveTab] = useState("grid");
+  const [airtableCamps, setAirtableCamps] = useState([]);
+
+  useEffect(() => {
+    getCamps()
+      .then(data => {
+        console.log('Loaded camps from Airtable:', data);
+        setAirtableCamps(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Airtable error:', err);
+        setLoading(false);
+      });
+  }, []);
+  const [loading, setLoading] = useState(true);
   const [selectedWeek, setSelectedWeek] = useState(3);
   const [selectedCircles, setSelectedCircles] = useState(new Set()); // empty = all
   const toggleCircle = (id) => setSelectedCircles(prev => {
@@ -183,10 +230,14 @@ export default function Camplify() {
   const [enrollBeforeCare, setEnrollBeforeCare] = useState(false);
   const [enrollAfterCare, setEnrollAfterCare] = useState(false);
   const openEnrollModal = (campId, kidId, status, campDays) => {
-    const camp = [...camps, ...dynamicCamps].find(c => c.id === campId);
+    const camp = [...camps, ...airtableCamps, ...dynamicCamps].find(c => c.id === campId);
     setEnrollModal({ campId, kidId, status });
-    setEnrollDays(campDays || ["M","T","W","Th","F"]);
-    setEnrollWeeks(camp?.weekRange || (camp ? [camp.week] : []));
+    // Always use the camp's own days, fall back to passed campDays, then default to M-F
+    const daysToUse = (camp?.days?.length > 0 ? camp.days : null) || campDays || ["M","T","W","Th","F"];
+    setEnrollDays(daysToUse);
+    // Weeks: use the camp's date range to find which computed weeks it spans
+    const campWeekNums = camp ? computedWeeks.filter(w => campInWeek(camp, w.num)).map(w => w.num) : [];
+    setEnrollWeeks(campWeekNums);
     setEnrollBeforeCare(false);
     setEnrollAfterCare(false);
   };
@@ -203,39 +254,37 @@ export default function Camplify() {
   };
 
   // breaks: Set of keys like "week-3" or "day-2026-07-07"
-  const [breaks, setBreaks] = useState(new Set(["week-1", "week-2", "week-3"]));
-  // Per-kid breaks: { kidId: Set<weekNum> }
-  const [kidBreaks, setKidBreaks] = useState({
-    2: new Set([1, 2, 3]),   // Lenny off weeks 1, 2, 3
-    1: new Set([1, 3]),      // Kingsley off weeks 1 and 3
-  });
-  const toggleKidWeekBreak = (kidId, weekNum) => {
+  const [breaks, setBreaks] = useState(new Set());
+  const [kidBreaks, setKidBreaks] = useState({});
+  const setKidBreak = (kidId, weekIso, label) => {
     setKidBreaks(prev => {
       const next = { ...prev };
-      const s = new Set(prev[kidId] || []);
-      if (s.has(weekNum)) s.delete(weekNum); else s.add(weekNum);
-      next[kidId] = s;
-      // Sync global breaks: a week is a break week if ANY selected kid is on break
+      const m = new Map(prev[kidId] || []);
+      if (m.has(weekIso) && label === undefined) {
+        m.delete(weekIso);
+      } else {
+        m.set(weekIso, label || "Break");
+      }
+      next[kidId] = m;
       return next;
     });
   };
+  const toggleKidWeekBreak = (kidId, weekNum) => setKidBreak(kidId, weekNum, undefined);
   const [openBreakPicker, setOpenBreakPicker] = useState(null); // weekNum or null
   const [weekAddCamp, setWeekAddCamp] = useState(null);
   const [weekAddName, setWeekAddName] = useState("");
   const [emailCopied, setEmailCopied] = useState(false);
-  const toggleWeekBreak = (weekNum) => {
+  const toggleWeekBreak = (weekIso) => {
     setBreaks(prev => {
       const next = new Set(prev);
-      const key = `week-${weekNum}`;
-      next.has(key) ? next.delete(key) : next.add(key);
+      next.has(weekIso) ? next.delete(weekIso) : next.add(weekIso);
       return next;
     });
   };
   const toggleDayBreak = (dateStr) => {
     setBreaks(prev => {
       const next = new Set(prev);
-      const key = `day-${dateStr}`;
-      next.has(key) ? next.delete(key) : next.add(key);
+      next.has(dateStr) ? next.delete(dateStr) : next.add(dateStr);
       return next;
     });
   };
@@ -300,7 +349,7 @@ export default function Camplify() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [manualForm, setManualForm] = useState({
     name: "", dateStart: "", dateEnd: "", location: "", address: "",
-    timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "",
+    timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", beforeCareCost: "", afterCareStart: "", afterCareEnd: "", afterCareCost: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "",
   });
   const updateForm = (field, val) => {
     setManualForm(prev => ({ ...prev, [field]: val }));
@@ -308,7 +357,7 @@ export default function Camplify() {
       setDuplicateMatch(null);
       const query = val.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
       if (query.length >= 2) {
-        const allCampPool = [...camps, ...dynamicCamps];
+        const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
         // Find camps that friends are in that match the query
         const friendCampIds = new Set(
           circles.flatMap(c => c.members.flatMap(m => m.camps))
@@ -333,7 +382,7 @@ export default function Camplify() {
   const findDuplicate = (name) => {
     if (!name.trim()) return null;
     const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const allCampPool = [...camps, ...dynamicCamps];
+    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
     const input = normalize(name);
     // Check exact or close match (contains or starts with)
     return allCampPool.find(c => {
@@ -352,16 +401,21 @@ export default function Camplify() {
     setDuplicateMatch(null);
     const id = nextCampId();
     const color = CAMP_COLORS[dynamicCamps.length % CAMP_COLORS.length];
-    // Compute week from dateStart
-    const weekRanges = [
-      { week: 1, start: "2026-06-22", end: "2026-06-26" },
-      { week: 2, start: "2026-06-29", end: "2026-07-03" },
-      { week: 3, start: "2026-07-06", end: "2026-07-10" },
-      { week: 4, start: "2026-07-13", end: "2026-07-17" },
-      { week: 5, start: "2026-07-20", end: "2026-07-24" },
+    // Compute week numbers from dateStart/dateEnd
+    const WEEK_DEFS = [
+      { num: 0, start: "2026-06-08", end: "2026-06-11" },
+      { num: 6, start: "2026-06-15", end: "2026-06-18" },
+      { num: 1, start: "2026-06-22", end: "2026-06-26" },
+      { num: 2, start: "2026-06-29", end: "2026-07-03" },
+      { num: 3, start: "2026-07-06", end: "2026-07-10" },
+      { num: 4, start: "2026-07-13", end: "2026-07-17" },
+      { num: 5, start: "2026-07-20", end: "2026-07-24" },
     ];
-    const matched = weekRanges.find(r => manualForm.dateStart >= r.start && manualForm.dateStart <= r.end);
-    const week = matched?.week || 1;
+    const ds = manualForm.dateStart;
+    const de = manualForm.dateEnd || ds;
+    const computedWeekRange = WEEK_DEFS.filter(w => ds <= w.end && de >= w.start).map(w => w.num);
+    const week = computedWeekRange[0] || 1;
+    const weekRange = computedWeekRange.length > 0 ? computedWeekRange : [1];
     const formatDate = (iso) => {
       if (!iso) return "";
       const d = new Date(iso + "T12:00:00");
@@ -379,11 +433,16 @@ export default function Camplify() {
       address: manualForm.address,
       hours: manualForm.timeStart && manualForm.timeEnd ? `${manualForm.timeStart} – ${manualForm.timeEnd}` : "",
       beforeCare: manualForm.beforeCareStart && manualForm.beforeCareEnd ? `${manualForm.beforeCareStart} – ${manualForm.beforeCareEnd}` : "",
+      beforeCareCost: manualForm.beforeCareCost || null,
       afterCare: manualForm.afterCareStart && manualForm.afterCareEnd ? `${manualForm.afterCareStart} – ${manualForm.afterCareEnd}` : "",
+      afterCareCost: manualForm.afterCareCost || null,
       discountCode: manualForm.discountCode,
       notes: manualForm.notes,
       days: manualForm.days.length ? manualForm.days : ["M","T","W","Th","F"],
       week,
+      weekRange,
+      dateStart: manualForm.dateStart,
+      dateEnd: manualForm.dateEnd,
       ageMin: manualForm.ageOrGrade === "age" && manualForm.ageMin ? parseInt(manualForm.ageMin) : null,
       ageMax: manualForm.ageOrGrade === "age" && manualForm.ageMax ? parseInt(manualForm.ageMax) : null,
       gradeMin: manualForm.ageOrGrade === "grade" ? manualForm.gradeMin : null,
@@ -392,10 +451,9 @@ export default function Camplify() {
       campType: manualForm.campType || null,
     };
     setDynamicCamps(prev => [...prev, newCamp]);
-    setCampStatus(prev => ({ ...prev, [id]: { [importKidId]: importStatus } }));
-    setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
+    setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", beforeCareCost: "", afterCareStart: "", afterCareEnd: "", afterCareCost: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
     setImportDone(true);
-    setTimeout(() => { setImportDone(false); setActiveTab("weekly"); }, 1800);
+    setTimeout(() => { setImportDone(false); setActiveTab("camps"); }, 1800);
   };
   const [emailText, setEmailText] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -406,6 +464,9 @@ export default function Camplify() {
   const [importDone, setImportDone] = useState(false);
   const [dynamicCamps, setDynamicCamps] = useState([]);
   const [dynamicCampStatus, setDynamicCampStatus] = useState({});
+
+  // Compute week columns dynamically from all camps
+  const computedWeeks = getWeeksFromCamps([...camps, ...airtableCamps, ...dynamicCamps]);
 
   const nextCampId = () => 1000 + dynamicCamps.length;
 
@@ -475,24 +536,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [shareCopied, setShareCopied] = useState(false);
   const [gridPopover, setGridPopover] = useState(null);
   const [gridAddCell, setGridAddCell] = useState(null); // { kidId, weekNum, x, y }
+  const [breakLabelInput, setBreakLabelInput] = useState("");
   const [friendProfilePopover, setFriendProfilePopover] = useState(null); // { person, x, y }
   const [campTypeFilter, setCampTypeFilter] = useState(new Set());
   const [campSort, setCampSort] = useState("date");
   const [focusedCampId, setFocusedCampId] = useState(null);
   const [expandedCampId, setExpandedCampId] = useState(null);
-  const [campReviews, setCampReviews] = useState({
-    // Sample reviews from circle members — keyed by campId
-    1: [
-      { id: 1, authorName: "Maya Chen", authorChild: "Sophie", circleIds: [1], rating: 5, text: "Sophie absolutely loved this camp. The counselors were incredible and she made so many new friends. Would highly recommend!", date: "2025-08-10" },
-      { id: 2, authorName: "Lisa Nguyen", authorChild: "Mia", circleIds: [3], rating: 4, text: "Great experience overall. Pickup can get a bit chaotic but the program itself is fantastic.", date: "2025-08-12" },
-    ],
-    3: [
-      { id: 3, authorName: "James Park", authorChild: "Oliver", circleIds: [1], rating: 5, text: "Oliver came home every day bursting with excitement about what he made. The animation project at the end was amazing.", date: "2025-08-15" },
-    ],
-    6: [
-      { id: 4, authorName: "Sarah Kim", authorChild: "Nora", circleIds: [2], rating: 4, text: "Nora had a wonderful time. The instructors are very experienced and patient with kids.", date: "2025-08-20" },
-    ],
-  });
+  const [campStatusPicker, setCampStatusPicker] = useState(null); // { campId, kidId }
+  const [campReviews, setCampReviews] = useState({});
   const [reviewDraft, setReviewDraft] = useState({}); // { [campId]: { rating, text } }
   const [showReviewForm, setShowReviewForm] = useState(null); // campId
   const [kidProfiles, setKidProfiles] = useState(() =>
@@ -1246,7 +1297,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
         <header className="header">
           <div className="header-inner">
             <div className="logo">
-              
               Camplify<span className="logo-dot">.</span>
             </div>
             <nav className="nav">
@@ -1271,13 +1321,35 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 + Add Camp
               </button>
             </nav>
+            {/* User menu */}
+            {(() => {
+              const { signOut } = useClerk();
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 12 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: "50%", background: "#3D6B1F",
+                    color: "white", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 700, flexShrink: 0, cursor: "default",
+                    title: userName,
+                  }}>{(userName || "P")[0]}</div>
+                  <button
+                    onClick={() => signOut()}
+                    style={{
+                      background: "none", border: "1px solid #E5E7EB", borderRadius: 7,
+                      padding: "5px 10px", fontFamily: "Inter, sans-serif",
+                      fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer",
+                    }}
+                  >Sign out</button>
+                </div>
+              );
+            })()}
           </div>
         </header>
 
         <main className="main" style={activeTab === "grid" ? { maxWidth: "none", padding: "24px 32px 80px" } : {}}>
           {/* ── GRID TAB ── */}
           {activeTab === "grid" && (() => {
-            const allCampPool = [...camps, ...dynamicCamps];
+            const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
 
             // Which circle members to show as rows (based on selectedCircles filter)
             const activeCircles = selectedCircles.size > 0
@@ -1293,10 +1365,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             // Build a map: personKey -> weekNum -> [camp]
             const getPersonCamps = (personCamps) => {
               const byWeek = {};
-              weeks.forEach(w => { byWeek[w.num] = []; });
+              computedWeeks.forEach(w => { byWeek[w.num] = []; });
               allCampPool.forEach(camp => {
                 if (personCamps.includes(camp.id)) {
-                  if (byWeek[camp.week] !== undefined) byWeek[camp.week].push(camp);
+                  computedWeeks.forEach(w => {
+                    if (campInWeek(camp, w.num)) byWeek[w.num].push(camp);
+                  });
                 }
               });
               return byWeek;
@@ -1304,17 +1378,21 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
             const getKidCamps = (kid) => {
               const byWeek = {};
-              weeks.forEach(w => { byWeek[w.num] = []; });
+              computedWeeks.forEach(w => { byWeek[w.num] = []; });
               allCampPool.forEach(camp => {
                 const status = campStatus[camp.id]?.[kid.id];
                 if (status) {
                   const s = typeof status === "string" ? status : status.status;
-                  if (s && byWeek[camp.week] !== undefined) byWeek[camp.week].push({ ...camp, kidStatus: s });
+                  if (s) {
+                    computedWeeks.forEach(w => {
+                      if (campInWeek(camp, w.num)) byWeek[w.num].push({ ...camp, kidStatus: s });
+                    });
+                  }
                 }
               });
               // Also add break info
-              weeks.forEach(w => {
-                if (kidBreaks[kid.id]?.has(w.num)) byWeek[w.num] = [{ __break: true }];
+              computedWeeks.forEach(w => {
+                if (kidBreaks[kid.id]?.has(w.num)) byWeek[w.num] = [{ __break: true, label: kidBreaks[kid.id].get(w.num) || "Break" }];
               });
               return byWeek;
             };
@@ -1347,11 +1425,11 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                 {/* Grid */}
                 <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: NAME_W + weeks.length * (COL_W + 8) }}>
+                  <div style={{ minWidth: NAME_W + computedWeeks.length * (COL_W + 8) }}>
 
                     {/* Header row */}
                     <div style={{ display: "flex", alignItems: "flex-end", marginBottom: 6, paddingLeft: NAME_W + 8, paddingBottom: 8, borderBottom: "2px solid #E5E7EB" }}>
-                      {weeks.map(w => (
+                      {computedWeeks.map(w => (
                         <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, textAlign: "center", borderLeft: "1px solid #F0F0F0" }}>
                           <div style={{ fontSize: 11.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px" }}>
                             {w.dates}
@@ -1411,9 +1489,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             </div>
 
                             {/* Week cells */}
-                            {weeks.map(w => {
+                            {computedWeeks.map(w => {
                               const dayCamps = byWeek[w.num] || [];
                               const isBreak = dayCamps.length === 1 && dayCamps[0].__break;
+                              const breakLabel = isBreak ? (dayCamps[0].label || "Break") : null;
                               const camp = !isBreak ? dayCamps[0] : null;
 
                               // Five colors only — same for my kids and friends
@@ -1426,12 +1505,20 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               return (
                                 <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, height: 90, borderLeft: "1px solid #F0F0F0", paddingLeft: 0 }}>
                                   {isBreak ? (
-                                    <div style={{
-                                      width: "100%", height: "100%", borderRadius: 12,
-                                      background: "#DCFCE7", border: "none",
-                                      display: "flex", alignItems: "center", justifyContent: "center",
-                                    }}>
-                                      <span style={{ fontSize: 12, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: "0.5px" }}>Break</span>
+                                    <div
+                                      onClick={() => {
+                                        const newLabel = window.prompt("Break label:", breakLabel);
+                                        if (newLabel !== null) setKidBreak(person.id, w.num, newLabel || "Break");
+                                      }}
+                                      style={{
+                                        width: "100%", height: "100%", borderRadius: 12,
+                                        background: "#DCFCE7", border: "none", cursor: "pointer",
+                                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+                                      }}
+                                      title="Click to edit label"
+                                    >
+                                      <span style={{ fontSize: 16 }}>🌿</span>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "center", padding: "0 6px" }}>{breakLabel}</span>
                                     </div>
                                   ) : !camp ? (
                                     person.isMyKid ? (
@@ -1620,10 +1707,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                 {/* Add camp popover — shown on empty my-kid cells */}
                 {gridAddCell && (() => {
-                  const allCampPool = [...camps, ...dynamicCamps];
+                  const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                   const kid = kids.find(k => k.id === gridAddCell.kidId);
                   const weekCampsAvail = allCampPool.filter(c =>
-                    (c.weekRange || [c.week]).includes(gridAddCell.weekNum) &&
+                    campInWeek(c, gridAddCell.weekNum) &&
                     !campStatus[c.id]?.[gridAddCell.kidId]
                   );
                   return (
@@ -1643,7 +1730,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       >
                         <div style={{ background: "#3D6B1F", padding: "10px 14px" }}>
                           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                            {weeks.find(w => w.num === gridAddCell.weekNum)?.dates}
+                            {computedWeeks.find(w => w.num === gridAddCell.weekNum)?.dates}
                           </div>
                           <div style={{ fontSize: 13, color: "white", fontWeight: 700, marginTop: 2 }}>
                             Add a camp for {kid?.name}
@@ -1687,6 +1774,46 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               onMouseLeave={e => e.currentTarget.style.background = "none"}
                             >+ Add a new camp</button>
                           </div>
+                          <div style={{ borderTop: "1px solid #F3F4F6", padding: "8px 14px 10px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                              <span>🌿</span> Mark as break
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input
+                                placeholder="e.g. Away, Grandparents..."
+                                value={breakLabelInput}
+                                onChange={e => setBreakLabelInput(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") {
+                                    setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, breakLabelInput.trim() || "Break");
+                                    setBreakLabelInput("");
+                                    setGridAddCell(null);
+                                  }
+                                  if (e.key === "Escape") setGridAddCell(null);
+                                }}
+                                style={{
+                                  flex: 1, padding: "6px 10px", border: "1.5px solid #E5E7EB",
+                                  borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 12.5,
+                                  color: "#1F2937", outline: "none",
+                                }}
+                                onFocus={e => e.target.style.borderColor = "#15803D"}
+                                onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+                                autoFocus={false}
+                              />
+                              <button
+                                onClick={() => {
+                                  setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, breakLabelInput.trim() || "Break");
+                                  setBreakLabelInput("");
+                                  setGridAddCell(null);
+                                }}
+                                style={{
+                                  background: "#15803D", border: "none", borderRadius: 7,
+                                  padding: "6px 12px", fontFamily: "Inter, sans-serif",
+                                  fontSize: 12, fontWeight: 700, color: "white", cursor: "pointer",
+                                }}
+                              >Add</button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1697,7 +1824,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   const { person } = friendProfilePopover;
                   const prof = person.profile || {};
                   const isVisible = prof.visible;
-                  const allCampPool = [...camps, ...dynamicCamps];
+                  const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                   const friendCamps = allCampPool.filter(c => person.camps?.includes(c.id));
                   const parentLastInitial = person.name?.split(" ")[1]?.[0] || "";
                   const INTEREST_MAP = { sports:"⚽ Sports", art:"🎨 Art", drama:"🎭 Drama", outdoors:"🌲 Outdoors", language:"🌍 Language", classic:"🏕️ Classic", stem:"🔬 STEM", music:"🎵 Music", academics:"📚 Academics" };
@@ -1815,7 +1942,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               stem:     { label: "STEM",      emoji: "🔬" },
               music:    { label: "Music",     emoji: "🎵" },
             };
-            const allCampPool = [...camps, ...dynamicCamps];
+            const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             const allTypes = Object.keys(TYPE_CONFIG).filter(t => allCampPool.some(c => c.campType === t));
 
             const filtered = allCampPool
@@ -1875,7 +2002,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 {/* Camp list */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {filtered.map(camp => {
-                    const campWeeks = (camp.weekRange || [camp.week]).map(wn => weeks.find(w => w.num === wn)).filter(Boolean);
+                    const campWeeks = (camp.weekRange || [camp.week]).map(wn => computedWeeks.find(w => w.num === wn)).filter(Boolean);
                     const friendsHere = circles.flatMap(c => c.members).filter(m => m.camps.includes(camp.id));
                     const typeConf = TYPE_CONFIG[camp.campType];
                     const isFocused = focusedCampId === camp.id;
@@ -1968,6 +2095,24 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   <span style={{ fontSize: 12.5, color: "#374151", fontWeight: 500 }}>{camp.hours}</span>
                                 </div>
                               )}
+                              {camp.beforeCare && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span style={{ fontSize: 13, flexShrink: 0 }}>☀️</span>
+                                  <div>
+                                    <span style={{ fontSize: 12.5, color: "#374151", fontWeight: 500 }}>Before Care: {camp.beforeCare}</span>
+                                    {camp.beforeCareCost && <span style={{ fontSize: 11.5, color: "#3D6B1F", fontWeight: 600, marginLeft: 8 }}>${Number(camp.beforeCareCost).toLocaleString()}</span>}
+                                  </div>
+                                </div>
+                              )}
+                              {camp.afterCare && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span style={{ fontSize: 13, flexShrink: 0 }}>🌙</span>
+                                  <div>
+                                    <span style={{ fontSize: 12.5, color: "#374151", fontWeight: 500 }}>After Care: {camp.afterCare}</span>
+                                    {camp.afterCareCost && <span style={{ fontSize: 11.5, color: "#3D6B1F", fontWeight: 600, marginLeft: 8 }}>${Number(camp.afterCareCost).toLocaleString()}</span>}
+                                  </div>
+                                </div>
+                              )}
                               {camp.days && (
                                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -2007,6 +2152,21 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   >{camp.url.replace(/^https?:\/\//, "")}</a>
                                 </div>
                               )}
+                              {camp.discountCode && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 12.5, color: "#374151", fontWeight: 500 }}>Discount code:</span>
+                                    <span style={{ fontSize: 12.5, fontWeight: 700, color: "#3D6B1F", fontFamily: "monospace", background: "#eef5e8", border: "1px solid #c2d9b0", borderRadius: 5, padding: "2px 8px", letterSpacing: "0.05em" }}>{camp.discountCode}</span>
+                                  </div>
+                                </div>
+                              )}
+                              {camp.notes && (
+                                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                                  <span style={{ fontSize: 12.5, color: "#374151", lineHeight: 1.5 }}>{camp.notes}</span>
+                                </div>
+                              )}
                             </div>
 
                             {/* Week × enrollments */}
@@ -2041,23 +2201,90 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               );
                             })()}
 
-                            {/* Action button */}
-                            <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-                              <button
-                                onClick={() => {
-                                  const kidToAdd = kids.find(k => !campStatus[camp.id]?.[k.id]) || kids[0];
-                                  openEnrollModal(camp.id, kidToAdd.id, "enrolled", camp.days);
-                                }}
-                                style={{
-                                  background: "#3D6B1F", border: "none", borderRadius: 8,
-                                  padding: "8px 16px", fontFamily: "Inter, sans-serif",
-                                  fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer",
-                                  display: "flex", alignItems: "center", gap: 6,
-                                }}
-                              >
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                Add a kid
-                              </button>
+                            {/* Action buttons — one per kid */}
+                            <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                              {kids.map(kid => {
+                                const s = campStatus[camp.id]?.[kid.id];
+                                const status = s ? (typeof s === "string" ? s : s?.status) : null;
+                                const statusColor = status === "enrolled" ? "#3D6B1F" : status === "thinking" ? "#D97706" : "#9CA3AF";
+                                const statusBg = status === "enrolled" ? "#eef5e8" : status === "thinking" ? "#FEF3C7" : "#F3F4F6";
+                                const isPickerOpen = campStatusPicker?.campId === camp.id && campStatusPicker?.kidId === kid.id;
+                                return (
+                                  <div key={kid.id} style={{ position: "relative" }}>
+                                    {status ? (
+                                      <button
+                                        onClick={() => setCampStatusPicker(isPickerOpen ? null : { campId: camp.id, kidId: kid.id })}
+                                        style={{
+                                          background: statusBg, border: `1.5px solid ${statusColor}55`,
+                                          borderRadius: 8, padding: "7px 14px",
+                                          fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700,
+                                          color: statusColor, cursor: "pointer",
+                                          display: "flex", alignItems: "center", gap: 6,
+                                        }}
+                                      >
+                                        <StatusIcon s={status} size={11} color={statusColor} />
+                                        {kid.name} — {STATUS_CONFIG[status]?.label}
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={statusColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 2 }}><polyline points="6 9 12 15 18 9"/></svg>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => openEnrollModal(camp.id, kid.id, "enrolled", camp.days)}
+                                        style={{
+                                          background: "#3D6B1F", border: "none", borderRadius: 8,
+                                          padding: "7px 14px", fontFamily: "Inter, sans-serif",
+                                          fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer",
+                                          display: "flex", alignItems: "center", gap: 6,
+                                        }}
+                                      >
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                        Add {kid.name}
+                                      </button>
+                                    )}
+                                    {/* Inline status picker dropdown */}
+                                    {isPickerOpen && (
+                                      <div style={{
+                                        position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 200,
+                                        background: "white", borderRadius: 10, border: "1px solid #E5E7EB",
+                                        boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden", minWidth: 180,
+                                      }}>
+                                        {["enrolled","thinking","waitlist"].map(s => (
+                                          <button key={s}
+                                            onClick={() => { setStatus(camp.id, kid.id, s); setCampStatusPicker(null); }}
+                                            style={{
+                                              width: "100%", textAlign: "left", background: status === s ? STATUS_CONFIG[s].light : "none",
+                                              border: "none", padding: "9px 14px", cursor: "pointer",
+                                              fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: status === s ? 700 : 500,
+                                              color: STATUS_CONFIG[s].bg,
+                                              display: "flex", alignItems: "center", gap: 8,
+                                              borderBottom: "1px solid #F3F4F6",
+                                            }}
+                                            onMouseEnter={e => e.currentTarget.style.background = STATUS_CONFIG[s].light}
+                                            onMouseLeave={e => e.currentTarget.style.background = status === s ? STATUS_CONFIG[s].light : "none"}
+                                          >
+                                            <StatusIcon s={s} size={12} color={STATUS_CONFIG[s].bg} />
+                                            {STATUS_CONFIG[s].label}
+                                            {status === s && <span style={{ marginLeft: "auto", fontSize: 11 }}>✓</span>}
+                                          </button>
+                                        ))}
+                                        <button
+                                          onClick={() => { removeStatus(camp.id, kid.id); setCampStatusPicker(null); }}
+                                          style={{
+                                            width: "100%", textAlign: "left", background: "none",
+                                            border: "none", padding: "9px 14px", cursor: "pointer",
+                                            fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 500,
+                                            color: "#DC2626", display: "flex", alignItems: "center", gap: 8,
+                                          }}
+                                          onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
+                                          onMouseLeave={e => e.currentTarget.style.background = "none"}
+                                        >
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                                          Remove from camp
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                               {friendsHere.length > 0 && (
                                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6B7280" }}>
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -2254,15 +2481,15 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               </div>
 
               {/* All weeks scrollable */}
-              {weeks.map((w) => {
+              {computedWeeks.map((w) => {
                 // Compute friend density for this week (used in header)
                 const allFriendMembers = circles.flatMap(c => c.members);
                 const friendDensity = new Set(
                   allFriendMembers.flatMap(m =>
                     m.camps.filter(cid => {
-                      const campPool0 = [...camps, ...dynamicCamps];
+                      const campPool0 = [...camps, ...airtableCamps, ...dynamicCamps];
                       const c = campPool0.find(x => x.id === cid);
-                      return c && c.week === w.num;
+                      return c && campInWeek(c, w.num);
                     }).map(cid => m.id + "-" + cid)
                   )
                 ).size;
@@ -2270,9 +2497,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 const densityCount = new Set(
                   allFriendMembers.filter(m =>
                     m.camps.some(cid => {
-                      const campPool0 = [...camps, ...dynamicCamps];
+                      const campPool0 = [...camps, ...airtableCamps, ...dynamicCamps];
                       const c = campPool0.find(x => x.id === cid);
-                      return c && c.week === w.num;
+                      return c && campInWeek(c, w.num);
                     })
                   ).map(m => m.id)
                 ).size; // unique friends active this week
@@ -2280,11 +2507,11 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 const myKidsCampsThisWeek = kids.filter(kid => selectedKids.has(kid.id)).flatMap((kid) => {
                   const enrolledCampIds = Object.entries(campStatus)
                     .filter(([, kidMap]) => kidMap[kid.id] && (typeof kidMap[kid.id] === "string" ? kidMap[kid.id] : kidMap[kid.id]?.status))
-                    .map(([cid]) => Number(cid));
-                  const campPool = [...camps, ...dynamicCamps];
+                    .map(([cid]) => cid);
+                  const campPool = [...camps, ...airtableCamps, ...dynamicCamps];
                   return enrolledCampIds
                     .map((cid) => campPool.find((c) => c.id === cid))
-                    .filter((c) => c && c.week === w.num)
+                    .filter((c) => c && campInWeek(c, w.num))
                     .map((c) => {
                       const enrollment = getKidEnrollment(c.id, kid.id);
                       return { ...c, kidName: kid.name, kidInitials: kid.initials, kidId: kid.id,
@@ -2298,9 +2525,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 const friendCampsThisWeek = {};
                 friendMembers.forEach((m) => {
                   m.camps.forEach((cid) => {
-                    const campPool2 = [...camps, ...dynamicCamps];
+                    const campPool2 = [...camps, ...airtableCamps, ...dynamicCamps];
                     const camp = campPool2.find((c) => c.id === cid);
-                    if (!camp || camp.week !== w.num) return;
+                    if (!camp || !campInWeek(camp, w.num)) return;
                     const lastName = m.name.split(" ")[1]?.[0] || "";
                     const initials = m.child[0] + lastName;
                     if (!friendCampsThisWeek[cid]) friendCampsThisWeek[cid] = { ...camp, friends: [] };
@@ -2318,18 +2545,18 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                 const allCampIds = new Set([
                   ...myKidsCampsThisWeek.map(c => c.id),
-                  ...Object.keys(friendCampsThisWeek).map(Number)
+                  ...Object.keys(friendCampsThisWeek)
                 ]);
 
                 // Sort: my kids first, then BFF circle, then rest
-                const allCampPool = [...camps, ...dynamicCamps];
+                const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                 const allCamps = [...allCampIds].map(id => allCampPool.find(c => c.id === id)).filter(Boolean);
                 const myKidsCampIds = new Set(myKidsCampsThisWeek.map(c => c.id));
                 const bffCampIds = new Set(
                   bffCircle
                     ? bffCircle.members.flatMap(m => m.camps.filter(cid => {
                         const c = camps.find(x => x.id === cid);
-                        return c && c.week === w.num;
+                        return c && campInWeek(c, w.num);
                       }))
                     : []
                 );
@@ -2366,23 +2593,13 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               Mark as break
                             </button>
                             {openBreakPicker === w.num && (() => {
-                              // Build the days for this week
-                              const weekRanges = [
-                                { week: 0, start: new Date(2026, 5, 8) },
-                                { week: 6, start: new Date(2026, 5, 15) },
-                                { week: 1, start: new Date(2026, 5, 22) },
-                                { week: 2, start: new Date(2026, 5, 29) },
-                                { week: 3, start: new Date(2026, 6, 6) },
-                                { week: 4, start: new Date(2026, 6, 13) },
-                                { week: 5, start: new Date(2026, 6, 20) },
-                              ];
-                              const range = weekRanges.find(r => r.week === w.num);
+                              // w.num is now an ISO date string (Monday of the week)
                               const dayNames = ["Mon","Tue","Wed","Thu","Fri"];
-                              const days = range ? Array.from({length:5}, (_,i) => {
-                                const d = new Date(range.start);
+                              const days = Array.from({length:5}, (_,i) => {
+                                const d = new Date(w.num + "T12:00:00");
                                 d.setDate(d.getDate() + i);
                                 return { label: dayNames[i], iso: d.toISOString().slice(0,10) };
-                              }) : [];
+                              });
                               return (
                                 <div className="break-picker">
                                   <div className="break-picker-title">Mark as break</div>
@@ -2391,10 +2608,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   </button>
                                   <div className="break-picker-divider">or pick specific days</div>
                                   {days.map(day => (
-                                    <button key={day.iso} className={`break-option${breaks.has(`day-${day.iso}`) ? " break-option-on" : ""}`}
+                                    <button key={day.iso} className={`break-option${breaks.has(day.iso) ? " break-option-on" : ""}`}
                                       onClick={() => toggleDayBreak(day.iso)}>
                                       {day.label} {day.iso.slice(5).replace("-","/")}
-                                      {breaks.has(`day-${day.iso}`) && <span className="break-check">✓</span>}
+                                      {breaks.has(day.iso) && <span className="break-check">✓</span>}
                                     </button>
                                   ))}
                                   <button className="break-picker-done" onClick={() => setOpenBreakPicker(null)}>Done</button>
@@ -2769,7 +2986,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const kid = kids.find(k => k.id === profileKidId);
             const profile = kidProfiles[profileKidId] || { interests: new Set(), zipcode: "", visible: false, age: "", bio: "" };
             const kidCircles = circles.filter(c => c.members.some(m => m.child === kid?.name || false));
-            const allCampPool = [...camps, ...dynamicCamps];
+            const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             const kidEnrolledCamps = allCampPool.filter(c => campStatus[c.id]?.[profileKidId]);
 
             return (
@@ -3393,6 +3610,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
                                   </select>
                                 </div>
+                                {(manualForm.beforeCareStart || manualForm.beforeCareEnd) && (
+                                  <div style={{ position: "relative", marginTop: 8 }}>
+                                    <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF", fontSize: 14, pointerEvents: "none" }}>$</span>
+                                    <input className="form-input" type="number" min="0" placeholder="Cost (optional)" value={manualForm.beforeCareCost} onChange={e => updateForm("beforeCareCost", e.target.value)} style={{ paddingLeft: 22 }} />
+                                  </div>
+                                )}
                               </div>
 
                               {/* After care */}
@@ -3411,6 +3634,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
                                   </select>
                                 </div>
+                                {(manualForm.afterCareStart || manualForm.afterCareEnd) && (
+                                  <div style={{ position: "relative", marginTop: 8 }}>
+                                    <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF", fontSize: 14, pointerEvents: "none" }}>$</span>
+                                    <input className="form-input" type="number" min="0" placeholder="Cost (optional)" value={manualForm.afterCareCost} onChange={e => updateForm("afterCareCost", e.target.value)} style={{ paddingLeft: 22 }} />
+                                  </div>
+                                )}
                               </div>
                             </>
                           );
@@ -3515,39 +3744,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           </div>
                         </div>
 
-                        <div className="form-field full" style={{ borderTop: "1px solid #f0f0e8", paddingTop: 16 }}>
-                          <label className="import-label">Add for</label>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {kids.map(kid => (
-                              <button key={kid.id} className="sibling-toggle"
-                                style={{ background: importKidId === kid.id ? "#4F46E5" : "white", color: importKidId === kid.id ? "white" : "#4F46E5", borderColor: "#4F46E5" }}
-                                onClick={() => setImportKidId(kid.id)}>
-                                <span className="sibling-initials-bubble" style={{ background: importKidId === kid.id ? "rgba(255,255,255,0.25)" : "#EEF2FF", color: importKidId === kid.id ? "white" : "#4F46E5" }}>{kid.initials}</span>
-                                {kid.name}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="form-field full">
-                          <label className="import-label">Status</label>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {["enrolled","thinking","waitlist"].map(s => (
-                              <button key={s} onClick={() => setImportStatus(s)} style={{
-                                background: importStatus === s ? STATUS_CONFIG[s].bg : "white",
-                                color: importStatus === s ? "white" : STATUS_CONFIG[s].bg,
-                                borderColor: STATUS_CONFIG[s].bg, border: "2px solid", borderRadius: 20,
-                                padding: "5px 14px", fontFamily: "'Nunito', sans-serif", fontWeight: 800,
-                                fontSize: 13, cursor: "pointer", transition: "all 0.15s",
-                                display: "inline-flex", alignItems: "center", gap: 6,
-                              }}>
-                                <StatusIcon s={s} size={12} color={importStatus === s ? "white" : STATUS_CONFIG[s].bg} />
-                                {STATUS_CONFIG[s].label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
                       </div>
                       <div className="form-btns" style={{ marginTop: 20 }}>
                         {duplicateMatch && (
@@ -3560,30 +3756,25 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 <button className="btn-primary" style={{ fontSize: 12, padding: "7px 14px" }} onClick={() => {
                                   setCampStatus(prev => ({ ...prev, [duplicateMatch.id]: { ...(prev[duplicateMatch.id] || {}), [importKidId]: importStatus } }));
                                   setDuplicateMatch(null);
-                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
+                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", beforeCareCost: "", afterCareStart: "", afterCareEnd: "", afterCareCost: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
                                   setImportDone(true);
                                   setTimeout(() => { setImportDone(false); setActiveTab("weekly"); }, 1800);
                                 }}>Join existing camp</button>
                                 <button className="btn-ghost" style={{ fontSize: 12, padding: "7px 14px" }} onClick={() => {
                                   setDuplicateMatch(null);
-                                  // force submit ignoring duplicate
                                   const id = nextCampId();
                                   const color = CAMP_COLORS[dynamicCamps.length % CAMP_COLORS.length];
-                                  const weekRanges = [
-                                    { week: 1, start: "2026-06-22", end: "2026-06-26" },
-                                    { week: 2, start: "2026-06-29", end: "2026-07-03" },
-                                    { week: 3, start: "2026-07-06", end: "2026-07-10" },
-                                    { week: 4, start: "2026-07-13", end: "2026-07-17" },
-                                    { week: 5, start: "2026-07-20", end: "2026-07-24" },
-                                  ];
-                                  const matched = weekRanges.find(r => manualForm.dateStart >= r.start && manualForm.dateStart <= r.end);
-                                  const week = matched?.week || 1;
+                                  const ds = manualForm.dateStart;
+                                  const de = manualForm.dateEnd || ds;
+                                  const WDEFS = [{num:0,start:"2026-06-08",end:"2026-06-11"},{num:6,start:"2026-06-15",end:"2026-06-18"},{num:1,start:"2026-06-22",end:"2026-06-26"},{num:2,start:"2026-06-29",end:"2026-07-03"},{num:3,start:"2026-07-06",end:"2026-07-10"},{num:4,start:"2026-07-13",end:"2026-07-17"},{num:5,start:"2026-07-20",end:"2026-07-24"}];
+                                  const wr = WDEFS.filter(w => ds <= w.end && de >= w.start).map(w => w.num);
+                                  const week = wr[0] || 1;
                                   const formatDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
-                                  const dates = manualForm.dateStart && manualForm.dateEnd ? `${formatDate(manualForm.dateStart)}–${formatDate(manualForm.dateEnd)}` : manualForm.dateStart ? formatDate(manualForm.dateStart) : "";
-                                  const newCamp = { id, color, emoji: "", name: manualForm.name, url: manualForm.url||"", dates, location: manualForm.location, address: manualForm.address, hours: manualForm.hours, beforeCare: manualForm.beforeCare, afterCare: manualForm.afterCare, discountCode: manualForm.discountCode, notes: manualForm.notes, days: manualForm.days.length ? manualForm.days : ["M","T","W","Th","F"], week };
+                                  const dates = ds && de ? `${formatDate(ds)}–${formatDate(de)}` : ds ? formatDate(ds) : "";
+                                  const newCamp = { id, color, emoji: "", name: manualForm.name, url: manualForm.url||"", dates, dateStart: ds, dateEnd: de, location: manualForm.location, address: manualForm.address, hours: manualForm.hours, beforeCare: manualForm.beforeCare, afterCare: manualForm.afterCare, discountCode: manualForm.discountCode, notes: manualForm.notes, days: manualForm.days.length ? manualForm.days : ["M","T","W","Th","F"], week, weekRange: wr.length ? wr : [1] };
                                   setDynamicCamps(prev => [...prev, newCamp]);
                                   setCampStatus(prev => ({ ...prev, [id]: { [importKidId]: importStatus } }));
-                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", afterCareStart: "", afterCareEnd: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
+                                  setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", beforeCareCost: "", afterCareStart: "", afterCareEnd: "", afterCareCost: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
                                   setImportDone(true);
                                   setTimeout(() => { setImportDone(false); setActiveTab("weekly"); }, 1800);
                                 }}>Add anyway</button>
@@ -3713,7 +3904,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
         {/* ── ENROLLMENT MODAL ── */}
         {enrollModal && (() => {
-          const camp = [...camps, ...dynamicCamps].find(c => c.id === enrollModal.campId);
+          const camp = [...camps, ...airtableCamps, ...dynamicCamps].find(c => c.id === enrollModal.campId);
           const kid = kids.find(k => k.id === enrollModal.kidId);
           if (!camp || !kid) return null;
           const campDays = camp.days || ["M","T","W","Th","F"];
@@ -3746,8 +3937,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 </div>
 
                 {/* Weeks selector — only shown for multi-week camps */}
-                {(camp.weekRange || [camp.week]).length > 1 && (() => {
-                  const campAllWeeks = (camp.weekRange || [camp.week]).map(wn => weeks.find(w => w.num === wn)).filter(Boolean);
+                {computedWeeks.filter(w => campInWeek(camp, w.num)).length > 1 && (() => {
+                  const campAllWeeks = (camp.weekRange || [camp.week]).map(wn => computedWeeks.find(w => w.num === wn)).filter(Boolean);
                   return (
                     <div className="modal-section">
                       <div className="modal-label">Weeks {kid.name} is attending</div>
@@ -3864,7 +4055,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 </div>
 
                 <div className="modal-footer">
-                  <button className="btn-primary" onClick={confirmEnroll} disabled={enrollDays.length === 0 || ((camp.weekRange||[camp.week]).length > 1 && enrollWeeks.length === 0)}>
+                  <button className="btn-primary" onClick={confirmEnroll} disabled={enrollDays.length === 0}>
                     Add {kid.name}
                   </button>
                   <button className="btn-ghost" onClick={() => setEnrollModal(null)}>Cancel</button>
