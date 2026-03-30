@@ -1511,26 +1511,55 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               Camplify<span className="logo-dot">.</span>
             </div>
             <nav className="nav">
-              {[
-                { id: "grid", label: "Overview" },
-                { id: "camps", label: "Camps" },
-                { id: "circles", label: "Circles" },
-                { id: "kids", label: "My Kids" },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  className={`nav-btn ${activeTab === tab.id ? "active" : ""}`}
-                  onClick={() => setActiveTab(tab.id)}
+              {window.innerWidth < 768 ? (
+                // Mobile: dropdown select
+                <select
+                  value={activeTab}
+                  onChange={e => setActiveTab(e.target.value)}
+                  style={{
+                    fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600,
+                    color: "#1F2937", background: "white", border: "1.5px solid #E5E7EB",
+                    borderRadius: 8, padding: "6px 32px 6px 12px", cursor: "pointer",
+                    appearance: "none", WebkitAppearance: "none",
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center",
+                  }}
                 >
-                  {tab.label}
-                </button>
-              ))}
-              <button
-                className="nav-add-camp-btn"
-                onClick={() => setActiveTab("import")}
-              >
-                + Add Camp
-              </button>
+                  {[
+                    { id: "grid", label: "Overview" },
+                    { id: "camps", label: "Camps" },
+                    { id: "circles", label: "Circles" },
+                    { id: "kids", label: "My Kids" },
+                    { id: "import", label: "+ Add Camp" },
+                  ].map(tab => (
+                    <option key={tab.id} value={tab.id}>{tab.label}</option>
+                  ))}
+                </select>
+              ) : (
+                // Desktop: pill tabs
+                <>
+                  {[
+                    { id: "grid", label: "Overview" },
+                    { id: "camps", label: "Camps" },
+                    { id: "circles", label: "Circles" },
+                    { id: "kids", label: "My Kids" },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      className={`nav-btn ${activeTab === tab.id ? "active" : ""}`}
+                      onClick={() => setActiveTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                  <button
+                    className="nav-add-camp-btn"
+                    onClick={() => setActiveTab("import")}
+                  >
+                    + Add Camp
+                  </button>
+                </>
+              )}
             </nav>
             {/* User menu */}
             {(() => {
