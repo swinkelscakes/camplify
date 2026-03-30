@@ -98,7 +98,7 @@ export const getKids = async (userId) => {
       name,
       initials,
       age: f.Age || '',
-      interests: f.Interests || [],
+      interests: (f.Interests || []).map(i => i.toLowerCase()),
       zipcode: f.Zipcode || '',
       visible: f.Visible || false,
       bio: f.Bio || '',
@@ -128,9 +128,10 @@ export const saveKid = async (userId, name, initials) => {
 
 export const updateKid = async (kidId, fields) => {
   const airtableFields = {};
+  if (fields.name !== undefined) airtableFields.Name = fields.name;
   if (fields.age !== undefined) airtableFields.Age = fields.age ? Number(fields.age) : null;
   if (fields.initials !== undefined) airtableFields.Initials = fields.initials;
-  if (fields.interests !== undefined) airtableFields.Interests = Array.from(fields.interests);
+  if (fields.interests !== undefined) airtableFields.Interests = Array.from(fields.interests).map(i => i === 'stem' ? 'STEM' : i.charAt(0).toUpperCase() + i.slice(1));
   if (fields.zipcode !== undefined) airtableFields.Zipcode = fields.zipcode;
   if (fields.visible !== undefined) airtableFields.Visible = fields.visible;
   if (fields.bio !== undefined) airtableFields.Bio = fields.bio;
@@ -328,6 +329,11 @@ export const getCircles = async (userId) => {
     // Load all members for these circles
     const allMembers = await base('CircleMembers').select().all();
 
+    // Load all enrollments, breaks and kids to show friends' full schedule
+    const allEnrollments = await base('Enrollments').select().all();
+    const allKids = await base('Kids').select().all();
+    const allBreaks = await base('Breaks').select().all();
+
     return allCircles.map(r => ({
       id: r.id,
       name: r.fields.Name || '',
@@ -336,13 +342,55 @@ export const getCircles = async (userId) => {
       createdBy: r.fields.CreatedBy || '',
       members: allMembers
         .filter(m => (m.fields.Circle || []).includes(r.id))
-        .map(m => ({
-          id: m.id,
-          userId: m.fields.UserId || '',
-          name: m.fields.ParentName || '',
-          child: m.fields.ChildName || '',
-          camps: [],
-        })),
+        .map(m => {
+          const memberUserId = m.fields.UserId || '';
+          const childName = m.fields.ChildName || '';
+          // Find all kids for this user
+          const memberKids = allKids.filter(k => k.fields.UserId === memberUserId);
+          // Find the specific kid this CircleMembers record is for (by name match)
+          const specificKid = memberKids.find(k => k.fields.Name === childName);
+          // Only visible if the specific kid has Visible === true
+          const isVisible = specificKid ? specificKid.fields.Visible === true : false;
+          // Only use visible kids for camp/break lookups
+          const visibleMemberKids = specificKid && isVisible ? [specificKid] : [];
+          const memberKidIds = new Set(visibleMemberKids.map(k => k.id));
+          // Find camps they're enrolled in
+          const memberEnrollments = allEnrollments
+            .filter(e => e.fields.Kid && memberKidIds.has(e.fields.Kid[0]));
+          const memberCampIds = memberEnrollments
+            .map(e => e.fields.Camp ? e.fields.Camp[0] : null)
+            .filter(Boolean);
+          // Build weeks map: campId -> enrolled weeks
+          const memberCampWeeks = {};
+          // Build status map: campId -> status
+          const memberCampStatus = {};
+          memberEnrollments.forEach(e => {
+            const campId = e.fields.Camp ? e.fields.Camp[0] : null;
+            if (campId) {
+              memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').filter(Boolean) : [];
+              memberCampStatus[campId] = e.fields.Status || 'enrolled';
+            }
+          });
+          // Find this member's breaks
+          const memberBreaks = allBreaks
+            .filter(b => b.fields.Kid && memberKidIds.has(b.fields.Kid[0]))
+            .map(b => ({
+              weekIso: b.fields.WeekIso || '',
+              label: b.fields.Label || 'Break',
+            }));
+          const hasVisibleKid = isVisible;
+          return {
+            id: m.id,
+            userId: memberUserId,
+            name: m.fields.ParentName || '',
+            child: m.fields.ChildName || '',
+            camps: memberCampIds,
+            campWeeks: memberCampWeeks,
+            campStatus: memberCampStatus,
+            breaks: memberBreaks,
+            visible: hasVisibleKid,
+          };
+        }),
     }));
   } catch (e) {
     console.error('Error loading circles:', e);
@@ -403,4 +451,74 @@ export const joinCircleByCode = async (userId, parentName, childName, inviteCode
     createdBy: circle.fields.CreatedBy,
     members: [],
   };
+};
+
+// Update CircleMembers records that have empty ChildName for this user
+export const updateCircleMemberKid = async (userId, childName) => {
+  try {
+    const records = await base('CircleMembers').select({
+      filterByFormula: `AND({UserId} = '${userId}', {ChildName} = '')`
+    }).all();
+    for (const r of records) {
+      await base('CircleMembers').update(r.id, { ChildName: childName });
+    }
+  } catch (e) {
+    console.error('Error updating circle member kid:', e);
+  }
+};
+
+// Update parent name in all CircleMembers records for this user
+export const updateParentName = async (userId, parentName) => {
+  try {
+    const records = await base('CircleMembers').select({
+      filterByFormula: `{UserId} = '${userId}'`
+    }).all();
+    for (const r of records) {
+      await base('CircleMembers').update(r.id, { ParentName: parentName });
+    }
+  } catch (e) {
+    console.error('Error updating parent name:', e);
+  }
+};
+
+// Load important dates for a list of kid IDs
+export const getImportantDates = async (kidIds) => {
+  if (!kidIds || kidIds.length === 0) return [];
+  try {
+    const records = await base('ImportantDates').select().all();
+    const kidIdSet = new Set(kidIds);
+    const filtered = records.filter(r => r.fields.Kid && kidIdSet.has(r.fields.Kid[0]));
+    return filtered.map(r => ({
+      id: r.id,
+      kidId: r.fields.Kid[0],
+      label: r.fields.Label || '',
+      dateStart: r.fields.DateStart || '',
+      dateEnd: r.fields.DateEnd || '',
+    }));
+  } catch (e) {
+    console.error('Error loading important dates:', e);
+    return [];
+  }
+};
+
+// Save a new important date
+export const saveImportantDate = async (kidId, label, dateStart, dateEnd) => {
+  const record = await base('ImportantDates').create({
+    Kid: [kidId],
+    Label: label,
+    DateStart: dateStart || null,
+    DateEnd: dateEnd || null,
+  });
+  return {
+    id: record.id,
+    kidId: kidId,
+    label: record.fields.Label || '',
+    dateStart: record.fields.DateStart || '',
+    dateEnd: record.fields.DateEnd || '',
+  };
+};
+
+// Delete an important date
+export const deleteImportantDate = async (dateId) => {
+  await base('ImportantDates').destroy(dateId);
 };

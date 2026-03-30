@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -31,30 +31,39 @@ const weeks = [];
 
 const CAMP_COLORS = ["#3D6B1F","#2C6E8A","#9B59B6","#2C3E50","#E8A825","#D4621A","#E74C3C","#8E44AD","#1ABC9C","#E67E22"];
 
+// Standardized initials for circle members: child first initial + parent last initial
+const getMemberInitials = (childName, parentName) => {
+  const c = (childName || "").trim();
+  const p = (parentName || "").trim();
+  const i1 = c[0]?.toUpperCase() || p[0]?.toUpperCase() || "?";
+  const i2 = p.split(" ")[1]?.[0]?.toUpperCase() || "";
+  return i1 + i2;
+};
+
 // Generate week columns dynamically from a pool of camps
+const toLocalIso = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
 const getWeeksFromCamps = (campPool) => {
   const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const mondaySet = new Map(); // iso string -> week object
+  const mondaySet = new Map();
   campPool.forEach(camp => {
     const start = camp.dateStart ? new Date(camp.dateStart + "T12:00:00") : null;
     const end = camp.dateEnd ? new Date(camp.dateEnd + "T12:00:00") : start;
     if (!start) return;
-    // Walk through each week the camp covers
     const cur = new Date(start);
-    // Rewind to Monday of start week
     const dow = cur.getDay();
     cur.setDate(cur.getDate() - (dow === 0 ? 6 : dow - 1));
     while (cur <= end) {
-      const iso = cur.toISOString().slice(0, 10);
+      const iso = toLocalIso(cur);
       if (!mondaySet.has(iso)) {
         const friday = new Date(cur);
         friday.setDate(friday.getDate() + 4);
         mondaySet.set(iso, {
-          num: iso, // use ISO date string as the "num" key
+          num: iso,
           dates: fmt(cur) + "–" + fmt(friday),
           monday: fmt(cur),
           dateStart: iso,
-          dateEnd: friday.toISOString().slice(0, 10),
+          dateEnd: toLocalIso(friday),
         });
       }
       cur.setDate(cur.getDate() + 7);
@@ -67,7 +76,8 @@ const getWeeksFromCamps = (campPool) => {
 const campInWeek = (camp, weekIso) => {
   if (!camp.dateStart) return camp.week === weekIso;
   const wStart = weekIso;
-  const wEnd = (() => { const d = new Date(weekIso + "T12:00:00"); d.setDate(d.getDate() + 6); return d.toISOString().slice(0, 10); })();
+  const d = new Date(weekIso + "T12:00:00"); d.setDate(d.getDate() + 6);
+  const wEnd = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   return camp.dateStart <= wEnd && (camp.dateEnd || camp.dateStart) >= wStart;
 };
 const STATUS_CONFIG = {
@@ -112,7 +122,7 @@ const AvatarStack = ({ members }) => {
         const bg = STATUS_COLORS[m.status] || STATUS_COLORS.enrolled;
         const initials = m.isMyKid
           ? m.initials
-          : (m.child?.[0] || "") + (m.name?.split(" ")[1]?.[0] || "");
+          : getMemberInitials(m.child, m.name);
         return (
           <div key={m.id} title={(() => {
             const displayName = m.isMyKid
@@ -176,6 +186,7 @@ function Camplify({ userId, userName, userEmail }) {
   const [airtableCircles, setAirtableCircles] = useState([]);
   const [enrollmentIds, setEnrollmentIds] = useState({});
   const [breakIds, setBreakIds] = useState({});
+  const [importantDates, setImportantDates] = useState([]); // [{ id, kidId, label, dateStart, dateEnd }]
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -214,12 +225,14 @@ function Camplify({ userId, userName, userEmail }) {
       // Load enrollments for these kids
       if (kidsData.length > 0) {
         const kidIdList = kidsData.map(k => k.id);
-        const [enrollments, breaks] = await Promise.all([
+        const [enrollments, breaks, importantDatesData] = await Promise.all([
           getEnrollments(kidIdList),
           getBreaks(kidIdList),
+          getImportantDates(kidIdList),
         ]);
         console.log('Loaded enrollments:', enrollments);
         console.log('Loaded breaks:', breaks);
+        setImportantDates(importantDatesData);
         const newStatus = {};
         const newIds = {};
         enrollments.forEach(e => {
@@ -390,7 +403,6 @@ function Camplify({ userId, userName, userEmail }) {
   ]);
   const [showAddDate, setShowAddDate] = useState(false);
   const [newDateValue, setNewDateValue] = useState("");
-  const [newDateLabel, setNewDateLabel] = useState("");
   const nextDateId = () => Date.now();
   const [addMode, setAddMode] = useState("manual"); // "manual" | "email"
   const [duplicateMatch, setDuplicateMatch] = useState(null); // matched camp if duplicate found
@@ -522,6 +534,76 @@ function Camplify({ userId, userName, userEmail }) {
   // Compute week columns dynamically from all camps
   const computedWeeks = getWeeksFromCamps([...camps, ...airtableCamps, ...dynamicCamps]);
 
+  // Get today's Monday ISO string (local time)
+  const todayMonday = (() => {
+    const d = new Date();
+    const dow = d.getDay();
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  })();
+
+  // Generate all weeks from today through the last camp week
+  const visibleWeeks = (() => {
+    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+    // Always show at least 52 weeks from today, extend further if camps go longer
+    let latestDate = new Date(todayMonday + "T12:00:00");
+    latestDate.setDate(latestDate.getDate() + 7 * 52);
+    allCampPool.forEach(c => {
+      const end = c.dateEnd || c.dateStart;
+      if (end) {
+        const d = new Date(end + "T12:00:00");
+        if (d > latestDate) latestDate = d;
+      }
+    });
+    const toLocalIso = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    // Generate every week from today through latest date
+    const weeks = [];
+    const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const cur = new Date(todayMonday + "T12:00:00");
+    while (cur <= latestDate) {
+      const iso = toLocalIso(cur);
+      const fri = new Date(cur); fri.setDate(fri.getDate() + 4);
+      weeks.push({ num: iso, dates: fmt(cur) + "–" + fmt(fri) });
+      cur.setDate(cur.getDate() + 7);
+    }
+    return weeks;
+  })();
+
+  // US federal holidays + common school holidays — weekday dates for 2026
+  const US_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-01-19": "MLK Day",
+    "2026-02-16": "Presidents' Day",
+    "2026-05-25": "Memorial Day",
+    "2026-06-19": "Juneteenth",
+    "2026-07-03": "Independence Day (observed)", // July 4 is Saturday, observed Friday
+    "2026-09-07": "Labor Day",
+    "2026-10-12": "Columbus Day",
+    "2026-11-11": "Veterans Day",
+    "2026-11-26": "Thanksgiving",
+    "2026-11-27": "Day after Thanksgiving",
+    "2026-12-24": "Christmas Eve",
+    "2026-12-25": "Christmas Day",
+    "2026-12-31": "New Year's Eve",
+  };
+
+  // Get holidays that fall in a given week
+  const getHolidaysInWeek = (weekIso) => {
+    const start = new Date(weekIso + "T00:00:00");
+    const end = new Date(start); end.setDate(end.getDate() + 6);
+    return Object.entries(US_HOLIDAYS)
+      .filter(([date]) => { const d = new Date(date + "T12:00:00"); return d >= start && d <= end; })
+      .map(([date, name]) => ({ date, name }));
+  };
+
   // Use airtableKids as the source of truth, fall back to empty array
   const kids = airtableKids;
 
@@ -599,11 +681,19 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [breakLabelInput, setBreakLabelInput] = useState("");
   const [addingKid, setAddingKid] = useState(false);
   const [newKidName, setNewKidName] = useState("");
+  const [newKidLastInitial, setNewKidLastInitial] = useState("");
   const [savingKid, setSavingKid] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState("");
   const [joinLoading, setJoinLoading] = useState(false);
-  const [circleKidIds, setCircleKidIds] = useState(new Set()); // kids to add when creating/joining
+  const [circleKidIds, setCircleKidIds] = useState(new Set());
+  const [parentName, setParentName] = useState(userName || "");
+  const [mobileWeekOffset, setMobileWeekOffset] = useState(0);
+  const [addingDate, setAddingDate] = useState(false);
+  const [newDateLabel, setNewDateLabel] = useState("");
+  const [newDateStart, setNewDateStart] = useState("");
+  const [newDateEnd, setNewDateEnd] = useState("");
+  const [savingDate, setSavingDate] = useState(false); // kids to add when creating/joining
   const [friendProfilePopover, setFriendProfilePopover] = useState(null); // { person, x, y }
   const [campTypeFilter, setCampTypeFilter] = useState(new Set());
   const [campSort, setCampSort] = useState("date");
@@ -619,10 +709,27 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [profileKidId, setProfileKidId] = useState(null);
   const updateKidProfile = (kidId, field, val) => {
     setKidProfiles(prev => ({ ...prev, [kidId]: { ...prev[kidId], [field]: val } }));
-    // Save to Airtable after a short delay to avoid too many requests
-    clearTimeout(window.__kidProfileTimer);
-    window.__kidProfileTimer = setTimeout(() => {
-      updateKid(kidId, { [field]: val }).catch(console.error);
+    if (field === "interests") {
+      // Save immediately for interests — each click is discrete
+      const interests = val instanceof Set ? Array.from(val) : val;
+      updateKid(kidId, { interests }).catch(console.error);
+    } else {
+      // Debounce text fields
+      clearTimeout(window.__kidProfileTimer);
+      window.__kidProfileTimer = setTimeout(() => {
+        const toSave = {};
+        if (field === "age") toSave.age = val ? Number(val) : null;
+        else toSave[field] = val;
+        updateKid(kidId, toSave).catch(console.error);
+      }, 800);
+    }
+  };
+
+  const updateKidName = (kidId, name, initials) => {
+    setAirtableKids(prev => prev.map(k => k.id === kidId ? { ...k, name, initials } : k));
+    clearTimeout(window.__kidNameTimer);
+    window.__kidNameTimer = setTimeout(() => {
+      updateKid(kidId, { name, initials }).catch(console.error);
     }, 800);
   };
 
@@ -734,9 +841,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
         .map((cid) => camps.find((c) => c.id === cid))
         .filter((c) => c && c.week === week)
         .map((c) => {
-          const lastName = m.name.split(" ")[1]?.[0] || "";
           return { ...c, friendName: m.child, parentName: m.name,
-            friendInitials: m.child[0] + lastName, childInitials: m.child[0] + lastName };
+            friendInitials: getMemberInitials(m.child, m.name), childInitials: getMemberInitials(m.child, m.name) };
         })
     );
   };
@@ -1328,8 +1434,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
         .dup-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 3px; }
 
         /* ── ENROLLMENT MODAL ── */
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
-        .modal-card { background: var(--white); border-radius: var(--radius-xl); padding: 22px; max-width: 400px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,0.2); display: flex; flex-direction: column; gap: 18px; }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; overflow-y: auto; }
+        .modal-card { background: var(--white); border-radius: var(--radius-xl); padding: 22px; max-width: 400px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,0.2); display: flex; flex-direction: column; gap: 18px; max-height: 90vh; overflow-y: auto; }
         .modal-header { display: flex; flex-direction: column; gap: 2px; }
         .modal-title { font-size: 10.5px; font-weight: 700; color: var(--gray-400); text-transform: uppercase; letter-spacing: 0.8px; }
         .modal-camp-name { font-size: 19px; font-weight: 700; color: var(--gray-900); }
@@ -1408,7 +1514,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               {[
                 { id: "grid", label: "Overview" },
                 { id: "camps", label: "Camps" },
-                { id: "liveCircles", label: "Circles" },
+                { id: "circles", label: "Circles" },
                 { id: "kids", label: "My Kids" },
               ].map((tab) => (
                 <button
@@ -1451,7 +1557,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
           </div>
         </header>
 
-        <main className="main" style={activeTab === "grid" ? { maxWidth: "none", padding: "24px 32px 80px" } : {}}>
+        <main className="main" style={activeTab === "grid" ? { maxWidth: "none", padding: window.innerWidth < 768 ? "16px 12px 80px" : "24px 32px 80px" } : {}}>
           {/* ── GRID TAB ── */}
           {activeTab === "grid" && (() => {
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
@@ -1462,7 +1568,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               : liveCircles;
             const friendRows = activeCircles.flatMap(c =>
               c.members
-                .filter(m => m.userId !== userId) // don't show yourself as a friend
+                .filter(m => m.userId !== userId)
+                .filter(m => m.visible !== false)
                 .map(m => ({ ...m, circleId: c.id, circleColor: c.color, circleName: c.name }))
             ).filter((m, i, arr) =>
               arr.findIndex(x => x.userId === m.userId && x.child === m.child) === i
@@ -1472,31 +1579,44 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const myKidRows = kids.map(k => ({ ...k, isMyKid: true }));
 
             // Build a map: personKey -> weekNum -> [camp]
-            const getPersonCamps = (personCamps) => {
+            const getPersonCamps = (personCamps, campWeeks, personBreaks, personCampStatus) => {
               const byWeek = {};
-              computedWeeks.forEach(w => { byWeek[w.num] = []; });
+              visibleWeeks.forEach(w => { byWeek[w.num] = []; });
               allCampPool.forEach(camp => {
                 if (personCamps.includes(camp.id)) {
-                  computedWeeks.forEach(w => {
-                    if (campInWeek(camp, w.num)) byWeek[w.num].push(camp);
+                  const enrolledWeeks = campWeeks?.[camp.id] || [];
+                  const status = personCampStatus?.[camp.id] || 'enrolled';
+                  visibleWeeks.forEach(w => {
+                    if (campInWeek(camp, w.num)) {
+                      if (enrolledWeeks.length === 0 || enrolledWeeks.includes(w.num)) {
+                        byWeek[w.num].push({ ...camp, kidStatus: status });
+                      }
+                    }
                   });
                 }
               });
+              // Add breaks
+              if (personBreaks) {
+                personBreaks.forEach(b => {
+                  if (byWeek[b.weekIso] !== undefined) {
+                    byWeek[b.weekIso] = [{ __break: true, label: b.label || "Break" }];
+                  }
+                });
+              }
               return byWeek;
             };
 
             const getKidCamps = (kid) => {
               const byWeek = {};
-              computedWeeks.forEach(w => { byWeek[w.num] = []; });
+              visibleWeeks.forEach(w => { byWeek[w.num] = []; });
               allCampPool.forEach(camp => {
                 const status = campStatus[camp.id]?.[kid.id];
                 if (status) {
                   const s = typeof status === "string" ? status : status.status;
                   const enrolledWeeks = status?.weeks || null;
                   if (s) {
-                    computedWeeks.forEach(w => {
+                    visibleWeeks.forEach(w => {
                       if (campInWeek(camp, w.num)) {
-                        // Only show in this week if no specific weeks selected, or this week is selected
                         if (!enrolledWeeks || enrolledWeeks.length === 0 || enrolledWeeks.includes(w.num)) {
                           byWeek[w.num].push({ ...camp, kidStatus: s });
                         }
@@ -1505,8 +1625,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   }
                 }
               });
-              // Also add break info
-              computedWeeks.forEach(w => {
+              visibleWeeks.forEach(w => {
                 if (kidBreaks[kid.id]?.has(w.num)) byWeek[w.num] = [{ __break: true, label: kidBreaks[kid.id].get(w.num) || "Break" }];
               });
               return byWeek;
@@ -1519,6 +1638,160 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               ...myKidRows.map(k => ({ ...k, isMyKid: true })),
               ...friendRows,
             ];
+
+            const isMobile = window.innerWidth < 768;
+
+            const showTip = (e, text) => {
+              if (!text) return;
+              const tip = document.createElement("div");
+              tip.id = "cell-tip";
+              tip.textContent = text;
+              tip.style.cssText = "position:fixed;background:#1F2937;color:white;font-size:11px;font-weight:600;padding:5px 10px;border-radius:7px;z-index:9999;pointer-events:none;white-space:nowrap;font-family:Inter,sans-serif;max-width:220px;";
+              const r = e.currentTarget.getBoundingClientRect();
+              tip.style.left = (r.left + r.width/2) + "px";
+              tip.style.top = (r.top - 36) + "px";
+              tip.style.transform = "translateX(-50%)";
+              document.body.appendChild(tip);
+            };
+            const hideTip = () => { const t = document.getElementById("cell-tip"); if (t) t.remove(); };
+
+            // ── MOBILE: one week at a time ──
+            if (isMobile) {
+              const mobileWeekIdx = Math.min(mobileWeekOffset, visibleWeeks.length - 1);
+              const w = visibleWeeks[mobileWeekIdx] || visibleWeeks[0];
+              if (!w) return null;
+              const weekHolidays = getHolidaysInWeek(w.num);
+              const allDays = ["M","T","W","Th","F"];
+              return (
+                <div style={{ padding: "0 0 80px" }}>
+                  {/* Week nav */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, background: "white", padding: "12px 16px", borderRadius: 12, border: "1px solid #E5E7EB" }}>
+                    <button onClick={() => setMobileWeekOffset(o => Math.max(0, o - 1))} disabled={mobileWeekOffset === 0}
+                      style={{ background: "none", border: "none", fontSize: 20, cursor: mobileWeekOffset === 0 ? "default" : "pointer", color: mobileWeekOffset === 0 ? "#D1D5DB" : "#374151", padding: "0 8px" }}>←</button>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#1F2937" }}>{w.dates}</div>
+                      <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
+                        {allDays.map((day, i) => {
+                          const dayDate = new Date(w.num + "T12:00:00"); dayDate.setDate(dayDate.getDate() + i);
+                          const dayIso = toLocalIso(dayDate);
+                          const holiday = weekHolidays.find(h => h.date === dayIso);
+                          return (
+                            <span key={day} style={{ fontSize: 11, fontWeight: 700, color: holiday ? "#EF4444" : "#D1D5DB" }}
+                              onMouseEnter={e => holiday && showTip(e, holiday.name)}
+                              onMouseLeave={hideTip}
+                            >{day}</span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <button onClick={() => setMobileWeekOffset(o => Math.min(visibleWeeks.length - 1, o + 1))} disabled={mobileWeekOffset >= visibleWeeks.length - 1}
+                      style={{ background: "none", border: "none", fontSize: 20, cursor: mobileWeekOffset >= visibleWeeks.length - 1 ? "default" : "pointer", color: mobileWeekOffset >= visibleWeeks.length - 1 ? "#D1D5DB" : "#374151", padding: "0 8px" }}>→</button>
+                  </div>
+
+                  {/* Kid cards for this week */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {allRows.map((person, pi) => {
+                      const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus);
+                      const dayCamps = byWeek[w.num] || [];
+                      const isBreak = dayCamps.length === 1 && dayCamps[0].__break;
+                      const breakLabel = isBreak ? (dayCamps[0].label || "Break") : null;
+                      const camp = !isBreak ? dayCamps[0] : null;
+                      const isLastMyKid = person.isMyKid && pi === myKidRows.length - 1;
+                      const status = camp?.kidStatus || (camp ? "enrolled" : null);
+                      let bg, textColor, border;
+                      if (status === "enrolled")      { bg = "#3D6B1F"; textColor = "white";   border = "none"; }
+                      else if (status === "thinking") { bg = "#FEF08A"; textColor = "#713F12"; border = "none"; }
+                      else if (status === "waitlist") { bg = "#F3F4F6"; textColor = "#6B7280"; border = "1.5px dashed #9CA3AF"; }
+                      else                            { bg = "white";   textColor = "#9CA3AF"; border = "1.5px dashed #E5E7EB"; }
+
+                      // Important dates this week for this kid
+                      const weekStart = new Date(w.num + "T12:00:00");
+                      const weekEnd = new Date(w.num + "T12:00:00"); weekEnd.setDate(weekEnd.getDate() + 6);
+                      const kidDatesThisWeek = person.isMyKid
+                        ? importantDates.filter(d => d.kidId === person.id && d.dateStart && new Date(d.dateStart + "T12:00:00") <= weekEnd && new Date((d.dateEnd || d.dateStart) + "T12:00:00") >= weekStart)
+                        : [];
+
+                      return (
+                        <div key={person.isMyKid ? `kid-${person.id}` : `friend-${person.id}`}>
+                          {isLastMyKid && friendRows.length > 0 && <div style={{ height: 1, background: "#E5E7EB", margin: "4px 0" }} />}
+                          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: "white", borderRadius: 12, border: "1px solid #F0F0F0" }}>
+                            {/* Avatar */}
+                            <div style={{ width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: person.isMyKid ? "#3D6B1F" : (person.circleColor || "#9CA3AF"), color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800 }}>
+                              {person.isMyKid ? person.initials : getMemberInitials(person.child, person.name)}
+                            </div>
+                            {/* Name */}
+                            <div style={{ width: 90, flexShrink: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#1F2937", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {person.isMyKid ? person.name : (person.child || person.name)}
+                              </div>
+                              {kidDatesThisWeek.length > 0 && (
+                                <div style={{ fontSize: 10, color: "#EF4444", fontWeight: 600, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {kidDatesThisWeek.map(d => d.label).join(", ")}
+                                </div>
+                              )}
+                            </div>
+                            {/* Camp cell */}
+                            <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
+                              onClick={e => {
+                                if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY });
+                                else if (isBreak && person.isMyKid) { const nl = window.prompt("Break label:", breakLabel); if (nl !== null) setKidBreak(person.id, w.num, nl || "Break"); }
+                                else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
+                              }}>
+                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px" }}>
+                                {isBreak && <span style={{ fontSize: 14 }}>🌿</span>}
+                                <span style={{ fontSize: 12, fontWeight: 700, color: textColor, textTransform: isBreak || camp ? "uppercase" : "none", letterSpacing: isBreak || camp ? "0.5px" : 0, textAlign: "center" }}>
+                                  {camp ? camp.name : isBreak ? breakLabel : person.isMyKid ? "+" : ""}
+                                </span>
+                              </div>
+                              <div style={{ display: "flex" }}>
+                                {allDays.map((day, i) => {
+                                  const dayDate = new Date(w.num + "T12:00:00"); dayDate.setDate(dayDate.getDate() + i);
+                                  const dayIso = toLocalIso(dayDate);
+                                  const holiday = weekHolidays.find(h => h.date === dayIso);
+                                  const impDate = kidDatesThisWeek.find(d => dayIso >= d.dateStart && dayIso <= (d.dateEnd || d.dateStart));
+                                  const isRed = holiday || impDate;
+                                  const campDays = camp?.days?.length > 0 ? camp.days : allDays;
+                                  const dayActive = camp ? campDays.includes(day) : isBreak;
+                                  const dayColor = isRed ? "#EF4444" : dayActive ? (textColor === "white" ? "rgba(255,255,255,0.7)" : `${textColor}99`) : (textColor === "white" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)");
+                                  return <div key={day} style={{ flex: 1, textAlign: "center", padding: "2px 0", fontSize: 8, fontWeight: 700, color: dayColor }}>{day}</div>;
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            // Empty state for brand new users
+            if (kids.length === 0 && friendRows.length === 0) {
+              return (
+                <div style={{ textAlign: "center", padding: "80px 20px" }}>
+                  <div style={{ fontSize: 40, marginBottom: 16 }}>🏕️</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>Welcome to Camplify!</div>
+                  <div style={{ fontSize: 14, color: "#6B7280", marginBottom: 24, maxWidth: 400, margin: "0 auto 24px" }}>
+                    Get started by adding your kids in the My Kids tab, then browse and enroll in camps.
+                  </div>
+                  <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+                    <button onClick={() => setActiveTab("kids")} style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>+ Add a Kid</button>
+                    <button onClick={() => setActiveTab("circles")} style={{ background: "white", border: "1.5px solid #E5E7EB", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "#374151", cursor: "pointer" }}>Join a Circle</button>
+                  </div>
+                </div>
+              );
+            }
+
+            // If no camps yet, show prompt
+            if (visibleWeeks.length === 0 && computedWeeks.length === 0) {
+              return (
+                <div style={{ textAlign: "center", padding: "60px 20px" }}>
+                  <div style={{ fontSize: 14, color: "#6B7280", marginBottom: 16 }}>No camps added yet — add some to see the schedule grid!</div>
+                  <button onClick={() => setActiveTab("import")} style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>+ Add a Camp</button>
+                </div>
+              );
+            }
 
             return (
               <div style={{ position: "relative" }}>
@@ -1538,161 +1811,205 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   ))}
                 </div>
 
-                {/* Grid */}
-                <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: NAME_W + computedWeeks.length * (COL_W + 8) }}>
-
-                    {/* Header row */}
-                    <div style={{ display: "flex", alignItems: "flex-end", marginBottom: 6, paddingLeft: NAME_W + 8, paddingBottom: 8, borderBottom: "2px solid #E5E7EB" }}>
-                      {computedWeeks.map(w => (
-                        <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, textAlign: "center", borderLeft: "1px solid #F0F0F0" }}>
-                          <div style={{ fontSize: 11.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px" }}>
-                            {w.dates}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Person rows */}
+                {/* Grid — name column frozen, weeks scroll */}
+                <div style={{ position: "relative", display: "flex" }}>
+                  {/* Frozen name column */}
+                  <div style={{ width: NAME_W, flexShrink: 0, zIndex: 10, background: "#F9FAFB", boxShadow: "3px 0 8px rgba(0,0,0,0.05)" }}>
+                    {/* Header spacer */}
+                    <div style={{ height: 52, borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }} />
                     {allRows.map((person, pi) => {
-                      const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps);
                       const isLastMyKid = person.isMyKid && pi === myKidRows.length - 1;
                       return (
                         <div key={person.isMyKid ? `kid-${person.id}` : `friend-${person.id}`}>
-                          <div style={{ display: "flex", alignItems: "center", marginBottom: 0, paddingBottom: 8, paddingTop: 8, borderBottom: "1px solid #F0F0F0" }}>
-                            {/* Name */}
-                            <div style={{ width: NAME_W, flexShrink: 0, paddingRight: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                              <div style={{
-                                width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
-                                background: person.isMyKid ? "#3D6B1F" : person.circleColor,
-                                border: "none",
-                                color: "white",
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                fontSize: person.isMyKid ? 9 : 11, fontWeight: 800,
-                              }}>
-                                {person.isMyKid ? person.initials : (person.child?.[0] ?? "?") + (person.name?.split(" ")[1]?.[0] ?? "")}
-                              </div>
-                              {person.isMyKid ? (
-                                <button
-                                  onClick={() => { setProfileKidId(person.id); setActiveTab("kids"); }}
-                                  style={{
-                                    background: "none", border: "none", padding: 0, cursor: "pointer",
-                                    fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700,
-                                    color: "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                                    textDecoration: "none", transition: "color 0.12s",
-                                  }}
-                                  onMouseEnter={e => e.currentTarget.style.color = "#3D6B1F"}
-                                  onMouseLeave={e => e.currentTarget.style.color = "#374151"}
-                                >
-                                  {person.name}
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={e => { e.stopPropagation(); setFriendProfilePopover(prev => prev?.person?.id === person.id ? null : { person, x: e.clientX, y: e.clientY }); }}
-                                  style={{
-                                    background: "none", border: "none", padding: 0, cursor: "pointer",
-                                    fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700,
-                                    color: "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                                    transition: "color 0.12s",
-                                  }}
-                                  onMouseEnter={e => e.currentTarget.style.color = person.circleColor}
-                                  onMouseLeave={e => e.currentTarget.style.color = "#374151"}
-                                >
-                                  {person.child}
-                                </button>
-                              )}
+                          <div style={{ height: 110, display: "flex", alignItems: "center", paddingRight: 12, paddingLeft: 0, borderBottom: "1px solid #F0F0F0", gap: 8, background: "#F9FAFB" }}>
+                            <div style={{ width: 30, height: 30, borderRadius: "50%", flexShrink: 0, background: person.isMyKid ? "#3D6B1F" : (person.circleColor || "#9CA3AF"), color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800 }}>
+                              {person.isMyKid ? person.initials : getMemberInitials(person.child, person.name)}
                             </div>
-
-                            {/* Week cells */}
-                            {computedWeeks.map(w => {
-                              const dayCamps = byWeek[w.num] || [];
-                              const isBreak = dayCamps.length === 1 && dayCamps[0].__break;
-                              const breakLabel = isBreak ? (dayCamps[0].label || "Break") : null;
-                              const camp = !isBreak ? dayCamps[0] : null;
-
-                              // Five colors only — same for my kids and friends
-                              const status = camp?.kidStatus || (camp ? "enrolled" : null);
-                              let bg, textColor, border;
-                              if (status === "enrolled")      { bg = "#3D6B1F"; textColor = "white";    border = "none"; }
-                              else if (status === "thinking") { bg = "#FEF08A"; textColor = "#713F12";  border = "none"; }
-                              else if (status === "waitlist") { bg = "#FEE2E2"; textColor = "#991B1B";  border = "none"; }
-
-                              return (
-                                <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, height: 90, borderLeft: "1px solid #F0F0F0", paddingLeft: 0 }}>
-                                  {isBreak ? (
-                                    <div
-                                      onClick={() => {
-                                        const newLabel = window.prompt("Break label:", breakLabel);
-                                        if (newLabel !== null) setKidBreak(person.id, w.num, newLabel || "Break");
-                                      }}
-                                      style={{
-                                        width: "100%", height: "100%", borderRadius: 12,
-                                        background: "#DCFCE7", border: "none", cursor: "pointer",
-                                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
-                                      }}
-                                      title="Click to edit label"
-                                    >
-                                      <span style={{ fontSize: 16 }}>🌿</span>
-                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "center", padding: "0 6px" }}>{breakLabel}</span>
-                                    </div>
-                                  ) : !camp ? (
-                                    person.isMyKid ? (
-                                      <button
-                                        onClick={e => { e.stopPropagation(); setGridAddCell(prev => prev?.kidId === person.id && prev?.weekNum === w.num ? null : { kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY }); }}
-                                        style={{
-                                          width: "100%", height: "100%", borderRadius: 12,
-                                          background: "transparent", border: "1.5px dashed #D1D5DB",
-                                          display: "flex", alignItems: "center", justifyContent: "center",
-                                          cursor: "pointer", transition: "all 0.12s",
-                                          fontFamily: "Inter, sans-serif",
-                                        }}
-                                        onMouseEnter={e => { e.currentTarget.style.borderColor = "#3D6B1F"; e.currentTarget.style.background = "#f6faf2"; e.currentTarget.querySelector("span").style.color = "#3D6B1F"; }}
-                                        onMouseLeave={e => { e.currentTarget.style.borderColor = "#D1D5DB"; e.currentTarget.style.background = "transparent"; e.currentTarget.querySelector("span").style.color = "#D1D5DB"; }}
-                                      >
-                                        <span style={{ fontSize: 22, color: "#D1D5DB", lineHeight: 1, fontWeight: 300, transition: "color 0.12s" }}>+</span>
-                                      </button>
-                                    ) : (
-                                      <div style={{
-                                        width: "100%", height: "100%", borderRadius: 12,
-                                        background: "transparent", border: "1.5px dashed #D1D5DB",
-                                      }} />
-                                    )
-                                  ) : (
-                                    <button
-                                      onClick={e => { e.stopPropagation(); setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY }); }}
-                                      style={{
-                                        width: "100%", height: "100%", borderRadius: 12,
-                                        background: bg, border,
-                                        cursor: "pointer", fontFamily: "Inter, sans-serif",
-                                        display: "flex", alignItems: "center", justifyContent: "center",
-                                        padding: "8px 10px", transition: "filter 0.12s",
-                                      }}
-                                      onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.93)"}
-                                      onMouseLeave={e => e.currentTarget.style.filter = "none"}
-                                    >
-                                      <span style={{
-                                        fontSize: 11.5, fontWeight: 700, color: textColor,
-                                        textTransform: "uppercase", letterSpacing: "0.5px",
-                                        textAlign: "center", lineHeight: 1.35,
-                                        overflow: "hidden", display: "-webkit-box",
-                                        WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
-                                      }}>
-                                        {camp.name}
-                                      </span>
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#1F2937", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {person.isMyKid ? person.name : (person.child || person.name)}
+                            </span>
                           </div>
-
-                          {/* Divider after my kids */}
-                          {isLastMyKid && friendRows.length > 0 && (
-                            <div style={{ height: 2, background: "#E5E7EB", marginBottom: 0 }} />
-                          )}
+                          {isLastMyKid && friendRows.length > 0 && <div style={{ height: 2, background: "#E5E7EB" }} />}
                         </div>
                       );
                     })}
+                  </div>
+
+                  {/* Scrollable weeks */}
+                  <div style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}>
+                    <div style={{ minWidth: visibleWeeks.length * (COL_W + 8) }}>
+
+                      {/* Header row */}
+                      <div style={{ display: "flex", height: 52, alignItems: "flex-end", borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }}>
+                        {visibleWeeks.map(w => {
+                          const weekStart = new Date(w.num + "T00:00:00");
+                          const holidays = getHolidaysInWeek(w.num);
+                          const dayLabels = ["M","T","W","Th","F"].map((day, i) => {
+                            const dayDate = new Date(weekStart); dayDate.setDate(dayDate.getDate() + i);
+                            const dayIso = dayDate.toISOString().slice(0, 10);
+                            const importantMatch = importantDates.find(d => {
+                              if (!d.dateStart) return false;
+                              const ds = new Date(d.dateStart + "T12:00:00");
+                              const de = d.dateEnd ? new Date(d.dateEnd + "T12:00:00") : ds;
+                              return dayDate >= ds && dayDate <= de;
+                            });
+                            const holidayMatch = holidays.find(h => h.date === dayIso);
+                            return { day, importantMatch, holidayMatch };
+                          });
+                          return (
+                            <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, borderLeft: "1px solid #F0F0F0" }}>
+                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px", textAlign: "center", paddingBottom: 4, paddingTop: 4 }}>
+                                {w.dates}
+                              </div>
+                              <div style={{ display: "flex", borderTop: "1px solid #F0F0F0", paddingBottom: 6 }}>
+                                {dayLabels.map(({ day, importantMatch, holidayMatch }) => {
+                                  const tooltip = [holidayMatch?.name, importantMatch?.label].filter(Boolean).join(" · ");
+                                  const color = holidayMatch ? "#EF4444" : importantMatch ? "#F59E0B" : "#D1D5DB";
+                                  return (
+                                    <div key={day} style={{ flex: 1, textAlign: "center", paddingTop: 3, fontSize: 8.5, fontWeight: 700, color, cursor: tooltip ? "help" : "default" }}
+                                      onMouseEnter={e => {
+                                        if (!tooltip) return;
+                                        const tip = document.createElement("div");
+                                        tip.id = "day-tip";
+                                        tip.textContent = tooltip;
+                                        tip.style.cssText = "position:fixed;background:#1F2937;color:white;font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;z-index:9999;pointer-events:none;white-space:nowrap;font-family:Inter,sans-serif;";
+                                        const r = e.currentTarget.getBoundingClientRect();
+                                        tip.style.left = (r.left + r.width/2) + "px";
+                                        tip.style.top = (r.top - 28) + "px";
+                                        tip.style.transform = "translateX(-50%)";
+                                        document.body.appendChild(tip);
+                                      }}
+                                      onMouseLeave={() => { const t = document.getElementById("day-tip"); if (t) t.remove(); }}
+                                    >
+                                      {day}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Week-only rows (names in frozen column) */}
+                      {allRows.map((person, pi) => {
+                        const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus);
+                        const isLastMyKid = person.isMyKid && pi === myKidRows.length - 1;
+                        const allDays = ["M","T","W","Th","F"];
+                        return (
+                          <div key={person.isMyKid ? `kid-${person.id}` : `friend-${person.id}`}>
+                            <div style={{ display: "flex", alignItems: "stretch", height: 110, paddingTop: 8, paddingBottom: 8, borderBottom: "1px solid #F0F0F0" }}>
+                              {visibleWeeks.map(w => {
+                                const dayCamps = byWeek[w.num] || [];
+                                const isBreak = dayCamps.length === 1 && dayCamps[0].__break;
+                                const breakLabel = isBreak ? (dayCamps[0].label || "Break") : null;
+                                const camp = !isBreak ? dayCamps[0] : null;
+                                const status = camp?.kidStatus || (camp ? "enrolled" : null);
+                                let bg, textColor, border;
+                                if (status === "enrolled")      { bg = "#3D6B1F"; textColor = "white";    border = "none"; }
+                                else if (status === "thinking") { bg = "#FEF08A"; textColor = "#713F12";  border = "none"; }
+                                else if (status === "waitlist") { bg = "#F3F4F6"; textColor = "#6B7280";  border = "1.5px dashed #9CA3AF"; }
+                                else                            { bg = "transparent"; textColor = "#D1D5DB"; border = "none"; }
+
+                                // Find important dates and holidays for this kid this week, mapped per day
+                                const weekStart = new Date(w.num + "T12:00:00");
+                                const weekEnd = new Date(w.num + "T12:00:00"); weekEnd.setDate(weekEnd.getDate() + 6);
+                                const kidImportantDates = person.isMyKid
+                                  ? importantDates.filter(d => d.kidId === person.id && d.dateStart && new Date(d.dateStart + "T12:00:00") <= weekEnd && new Date((d.dateEnd || d.dateStart) + "T12:00:00") >= weekStart)
+                                  : [];
+                                const weekHolidays = getHolidaysInWeek(w.num);
+                                // Map each day to its important date label and holiday name
+                                const dayImportant = {};
+                                const dayHoliday = {};
+                                allDays.forEach((day, i) => {
+                                  const dayDate = new Date(w.num + "T12:00:00"); dayDate.setDate(dayDate.getDate() + i);
+                                  const dayIso = toLocalIso(dayDate);
+                                  const match = kidImportantDates.find(d => dayIso >= d.dateStart && dayIso <= (d.dateEnd || d.dateStart));
+                                  if (match) dayImportant[day] = match.label;
+                                  const holiday = weekHolidays.find(h => h.date === dayIso);
+                                  if (holiday) dayHoliday[day] = holiday.name;
+                                });
+                                const hasImportant = Object.keys(dayImportant).length > 0;
+                                return (
+                                  <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, display: "flex", alignItems: "stretch" }}>
+                                    {isBreak ? (
+                                      <div onClick={() => { if (person.isMyKid) { const nl = window.prompt("Break label:", breakLabel); if (nl !== null) setKidBreak(person.id, w.num, nl || "Break"); } }}
+                                        style={{ width: "100%", borderRadius: 12, background: "#DCFCE7", cursor: person.isMyKid ? "pointer" : "default", display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", position: "relative" }}>
+
+                                        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, position: "relative" }}>
+                                          <span style={{ fontSize: 16 }}>🌿</span>
+                                          <span style={{ fontSize: 11, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "center", padding: "0 6px" }}>{breakLabel}</span>
+                                        </div>
+                                        <div style={{ display: "flex" }}>
+                                          {allDays.map(d => (
+                                          <div key={d}
+                                            style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : "rgba(21,128,61,0.5)", cursor: (dayHoliday[d] || dayImportant[d]) ? "help" : "default" }}
+                                            onMouseEnter={e => (dayHoliday[d] || dayImportant[d]) && showTip(e, [dayHoliday[d], dayImportant[d]].filter(Boolean).join(" · "))}
+                                            onMouseLeave={hideTip}
+                                          >{d}</div>
+                                        ))}
+                                        </div>
+                                      </div>
+                                    ) : !camp ? (
+                                      person.isMyKid ? (
+                                        <button onClick={e => { e.stopPropagation(); setGridAddCell(prev => prev?.kidId === person.id && prev?.weekNum === w.num ? null : { kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY }); }}
+                                          style={{ width: "100%", borderRadius: 12, background: "transparent", border: "1.5px dashed #D1D5DB", display: "flex", flexDirection: "column", alignItems: "stretch", cursor: "pointer", transition: "all 0.12s", overflow: "hidden", padding: 0 }}
+                                          onMouseEnter={e => { e.currentTarget.style.borderColor = "#3D6B1F"; e.currentTarget.style.background = "#f6faf2"; }}
+                                          onMouseLeave={e => { e.currentTarget.style.borderColor = "#D1D5DB"; e.currentTarget.style.background = "transparent"; }}>
+                                          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                            <span style={{ fontSize: 22, color: "#D1D5DB", lineHeight: 1, fontWeight: 300 }}>+</span>
+                                          </div>
+                                          <div style={{ display: "flex" }}>
+                                            {allDays.map(d => (
+                                              <div key={d}
+                                                style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : "#D1D5DB", cursor: (dayHoliday[d] || dayImportant[d]) ? "help" : "default" }}
+                                                onMouseEnter={e => (dayHoliday[d] || dayImportant[d]) && showTip(e, [dayHoliday[d], dayImportant[d]].filter(Boolean).join(" · "))}
+                                                onMouseLeave={hideTip}
+                                              >{d}</div>
+                                            ))}
+                                          </div>
+                                        </button>
+                                      ) : (
+                                        <div style={{ width: "100%", borderRadius: 12, background: "transparent", border: "1.5px dashed #E5E7EB" }} />
+                                      )
+                                    ) : (
+                                      <button onClick={e => { e.stopPropagation(); setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY }); }}
+                                        style={{ width: "100%", borderRadius: 12, background: bg, border, cursor: "pointer", fontFamily: "Inter, sans-serif", display: "flex", flexDirection: "column", alignItems: "stretch", padding: 0, overflow: "hidden", transition: "filter 0.12s", position: "relative" }}
+                                        onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.93)"}
+                                        onMouseLeave={e => e.currentTarget.style.filter = "none"}>
+                                        {(() => {
+                                          const campDays = camp.days?.length > 0 ? camp.days : allDays;
+                                          return (
+                                            <>
+
+                                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "8px 10px" }}>
+                                                <span style={{ fontSize: 11.5, fontWeight: 700, color: textColor, textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "center", lineHeight: 1.35, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", position: "relative" }}>
+                                                  {camp.name}
+                                                </span>
+                                              </div>
+                                              <div style={{ display: "flex" }}>
+                                                {allDays.map(d => (
+                                                <div key={d}
+                                                  style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: (dayHoliday[d] || dayImportant[d]) ? "#EF4444" : campDays.includes(d) ? (textColor === "white" ? "rgba(255,255,255,0.8)" : `${textColor}CC`) : (textColor === "white" ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.15)"), cursor: (dayHoliday[d] || dayImportant[d]) ? "help" : "default" }}
+                                                  onMouseEnter={e => (dayHoliday[d] || dayImportant[d]) && showTip(e, [dayHoliday[d], dayImportant[d]].filter(Boolean).join(" · "))}
+                                                  onMouseLeave={hideTip}
+                                                >{d}</div>
+                                              ))}
+                                              </div>
+                                            </>
+                                          );
+                                        })()}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {isLastMyKid && friendRows.length > 0 && <div style={{ height: 2, background: "#E5E7EB" }} />}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
@@ -1835,12 +2152,13 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         style={{
                           position: "fixed",
                           left: Math.min(gridAddCell.x + 10, window.innerWidth - 300),
-                          top: Math.min(gridAddCell.y + 10, window.innerHeight - 360),
+                          top: Math.min(gridAddCell.y + 10, window.innerHeight - 420),
                           width: 280, background: "white",
                           borderRadius: "var(--radius-xl)",
                           boxShadow: "0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)",
                           border: "1px solid #e5e7eb",
-                          overflow: "hidden", zIndex: 51,
+                          overflow: "visible", zIndex: 51,
+                          maxHeight: "80vh", display: "flex", flexDirection: "column",
                         }}
                       >
                         <div style={{ background: "#3D6B1F", padding: "10px 14px" }}>
@@ -1851,7 +2169,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             Add a camp for {kid?.name}
                           </div>
                         </div>
-                        <div style={{ padding: "8px 0", maxHeight: 280, overflowY: "auto" }}>
+                        <div style={{ padding: "8px 0", flex: 1, overflowY: "auto", maxHeight: 320, borderRadius: "0 0 var(--radius-xl) var(--radius-xl)" }}>
                           {weekCampsAvail.length === 0 ? (
                             <div style={{ padding: "16px 14px", fontSize: 12.5, color: "#9CA3AF", textAlign: "center" }}>
                               No camps available this week
@@ -2797,8 +3115,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     const campPool2 = [...camps, ...airtableCamps, ...dynamicCamps];
                     const camp = campPool2.find((c) => c.id === cid);
                     if (!camp || !campInWeek(camp, w.num)) return;
-                    const lastName = m.name.split(" ")[1]?.[0] || "";
-                    const initials = m.child[0] + lastName;
+                              const initials = m.child[0] + lastName;
                     if (!friendCampsThisWeek[cid]) friendCampsThisWeek[cid] = { ...camp, friends: [] };
                     if (!friendCampsThisWeek[cid].friends.find(f => f.name === m.child)) {
                       // Simulate friend status: member id %3 for variety
@@ -3253,14 +3570,66 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             ];
             const AGES = ["4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"];
             const kid = kids.find(k => k.id === profileKidId);
-            const profile = kidProfiles[profileKidId] || { interests: new Set(), zipcode: "", visible: false, age: "", bio: "" };
-            const kidCircles = liveCircles.filter(c => c.members.some(m => m.userId === userId && m.child === kid?.name));
+            const profile = kidProfiles[profileKidId] || { interests: new Set(), zipcode: "", visible: true, age: "", bio: "" };
+            const interests = profile.interests instanceof Set ? profile.interests : new Set(profile.interests || []);
+            const kidCircles = liveCircles.filter(c => c.members.some(m => 
+              m.userId === userId && (m.child === kid?.name || m.child === "" || !m.child)
+            ));
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             const kidEnrolledCamps = allCampPool.filter(c => campStatus[c.id]?.[profileKidId]);
 
             if (loading) return (
               <div style={{ textAlign: "center", padding: "60px 0", color: "#9CA3AF", fontSize: 14 }}>Loading...</div>
             );
+
+            if (kids.length === 0 && !addingKid) return (
+              <div style={{ textAlign: "center", padding: "60px 20px" }}>
+                <div style={{ fontSize: 40, marginBottom: 16 }}>👧🏽</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>Add your first child</div>
+                <div style={{ fontSize: 14, color: "#6B7280", marginBottom: 24 }}>Add your child's name to get started tracking camps.</div>
+                <button
+                  onClick={() => setAddingKid(true)}
+                  style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 24px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}
+                >+ Add a Child</button>
+              </div>
+            );
+
+            if (kids.length === 0 && addingKid) {
+              const doSave = async () => {
+                if (!newKidName.trim() || savingKid) return;
+                setSavingKid(true);
+                const firstName = newKidName.trim();
+                const lastI = newKidLastInitial.trim().toUpperCase().slice(0, 1);
+                const displayName = lastI ? `${firstName} ${lastI}.` : firstName;
+                const initials = (firstName[0] + (lastI || firstName[1] || "")).toUpperCase();
+                const newKid = await saveKid(userId, displayName, initials);
+                await updateCircleMemberKid(userId, displayName).catch(console.error);
+                setAirtableKids(prev => [...prev, newKid]);
+                setProfileKidId(newKid.id);
+                setSelectedKids(new Set([newKid.id]));
+                // Reload circles to pick up updated member name
+                getCircles(userId).then(setAirtableCircles).catch(console.error);
+                setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); setSavingKid(false);
+              };
+              return (
+                <div style={{ maxWidth: 400, margin: "60px auto", textAlign: "center" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#1F2937", marginBottom: 24 }}>What's your child's name?</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <input autoFocus placeholder="First name" value={newKidName} onChange={e => setNewKidName(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") doSave(); }}
+                      style={{ width: "100%", padding: "12px 16px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 600, color: "#1F2937", outline: "none" }} />
+                    <input placeholder="Last initial (optional)" value={newKidLastInitial} maxLength={1} onChange={e => setNewKidLastInitial(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") doSave(); }}
+                      style={{ width: "100%", padding: "12px 16px", border: "2px solid #E5E7EB", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 600, color: "#1F2937", outline: "none" }} />
+                    <button disabled={!newKidName.trim() || savingKid} onClick={doSave}
+                      style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "12px", fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 700, color: "white", cursor: "pointer", opacity: newKidName.trim() ? 1 : 0.4 }}>
+                      {savingKid ? "Saving..." : "Add Child"}
+                    </button>
+                    <button onClick={() => setAddingKid(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 14 }}>Cancel</button>
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <div>
@@ -3291,49 +3660,44 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   ))}
                   {/* Add a kid button */}
                   {(() => {
+                    const doSave = async () => {
+                      if (!newKidName.trim() || savingKid) return;
+                      setSavingKid(true);
+                      const firstName = newKidName.trim();
+                      const lastI = newKidLastInitial.trim().toUpperCase().slice(0, 1);
+                      const displayName = lastI ? `${firstName} ${lastI}.` : firstName;
+                      const initials = (firstName[0] + (lastI || firstName[1] || "")).toUpperCase();
+                      const newKid = await saveKid(userId, displayName, initials);
+                      await updateCircleMemberKid(userId, displayName).catch(console.error);
+                      setAirtableKids(prev => [...prev, newKid]);
+                      setProfileKidId(newKid.id);
+                      getCircles(userId).then(setAirtableCircles).catch(console.error);
+                      setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); setSavingKid(false);
+                    };
                     return addingKid ? (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <input
                           autoFocus
-                          placeholder="Child's name"
+                          placeholder="First name"
                           value={newKidName}
                           onChange={e => setNewKidName(e.target.value)}
-                          onKeyDown={async e => {
-                            if (e.key === "Enter" && newKidName.trim() && !savingKid) {
-                              setSavingKid(true);
-                              const initials = newKidName.trim().split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-                              const newKid = await saveKid(userId, newKidName.trim(), initials);
-                              setAirtableKids(prev => [...prev, newKid]);
-                              setProfileKidId(newKid.id);
-                              setNewKidName(""); setAddingKid(false); setSavingKid(false);
-                            }
-                            if (e.key === "Escape") { setNewKidName(""); setAddingKid(false); }
-                          }}
-                          style={{
-                            padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10,
-                            fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600,
-                            color: "#1F2937", outline: "none", width: 160,
-                          }}
+                          onKeyDown={e => { if (e.key === "Enter") doSave(); if (e.key === "Escape") { setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); } }}
+                          style={{ padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "#1F2937", outline: "none", width: 130 }}
+                        />
+                        <input
+                          placeholder="Last initial"
+                          value={newKidLastInitial}
+                          maxLength={1}
+                          onChange={e => setNewKidLastInitial(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") doSave(); if (e.key === "Escape") { setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); } }}
+                          style={{ padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "#1F2937", outline: "none", width: 100 }}
                         />
                         <button
-                          disabled={!newKidName.trim() || saving}
-                          onClick={async () => {
-                            if (!newKidName.trim() || savingKid) return;
-                            setSavingKid(true);
-                            const initials = newKidName.trim().split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-                            const newKid = await saveKid(userId, newKidName.trim(), initials);
-                            setAirtableKids(prev => [...prev, newKid]);
-                            setProfileKidId(newKid.id);
-                            setNewKidName(""); setAddingKid(false); setSavingKid(false);
-                          }}
-                          style={{
-                            background: "#3D6B1F", border: "none", borderRadius: 10,
-                            padding: "8px 16px", fontFamily: "Inter, sans-serif",
-                            fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer",
-                            opacity: newKidName.trim() && !savingKid ? 1 : 0.4,
-                          }}
+                          disabled={!newKidName.trim() || savingKid}
+                          onClick={doSave}
+                          style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "8px 16px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer", opacity: newKidName.trim() && !savingKid ? 1 : 0.4 }}
                         >{savingKid ? "Saving..." : "Add"}</button>
-                        <button onClick={() => { setNewKidName(""); setAddingKid(false); }}
+                        <button onClick={() => { setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); }}
                           style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 14 }}>Cancel</button>
                       </div>
                     ) : (
@@ -3357,6 +3721,24 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
+                  {/* Parent name card */}
+                  <div style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: "var(--radius-xl)", padding: "16px 20px", boxShadow: "var(--shadow-sm)", marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Your Name</div>
+                    <input
+                      placeholder="Your name (shown to other parents)"
+                      value={parentName}
+                      onChange={e => setParentName(e.target.value)}
+                      onBlur={async () => {
+                        if (parentName.trim()) {
+                          await updateParentName(userId, parentName.trim()).catch(console.error);
+                          getCircles(userId).then(setAirtableCircles).catch(console.error);
+                        }
+                      }}
+                      style={{ width: "100%", fontWeight: 600, fontSize: 15, color: "#1F2937", border: "none", outline: "none", background: "transparent", fontFamily: "Inter, sans-serif", padding: 0 }}
+                      onFocus={e => e.target.style.borderBottom = "2px solid #3D6B1F"}
+                    />
+                  </div>
+
                   {/* Profile card */}
                   <div style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: "var(--radius-xl)", padding: "20px", boxShadow: "var(--shadow-sm)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
@@ -3366,27 +3748,37 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         display: "flex", alignItems: "center", justifyContent: "center",
                         fontSize: 16, fontWeight: 800, flexShrink: 0,
                       }}>{kid?.initials}</div>
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: 20, color: "#1F2937" }}>{kid?.name}</div>
+                      <div style={{ flex: 1 }}>
+                        <input
+                          value={kid?.name || ""}
+                          onChange={e => {
+                            const name = e.target.value;
+                            const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+                            updateKidName(profileKidId, name, initials);
+                          }}
+                          style={{ fontWeight: 800, fontSize: 20, color: "#1F2937", border: "none", outline: "none", background: "transparent", width: "100%", fontFamily: "Inter, sans-serif", padding: 0 }}
+                          onFocus={e => e.target.style.borderBottom = "2px solid #3D6B1F"}
+                          onBlur={e => e.target.style.borderBottom = "none"}
+                        />
                         {profile.age && <div style={{ fontSize: 13, color: "#6B7280", marginTop: 2 }}>Age {profile.age}</div>}
                       </div>
                       {/* Visibility toggle */}
                       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 500 }}>
-                          {profile.visible ? "Visible to other parents" : "Profile hidden"}
+                          Visible to other parents in your circle(s)
                         </span>
                         <button
                           onClick={() => updateKidProfile(profileKidId, "visible", !profile.visible)}
                           style={{
                             width: 44, height: 24, borderRadius: 12, border: "none",
-                            background: profile.visible ? "#3D6B1F" : "#D1D5DB",
+                            background: (profile.visible !== false) ? "#3D6B1F" : "#D1D5DB",
                             cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0,
                           }}
                         >
                           <div style={{
                             width: 18, height: 18, borderRadius: "50%", background: "white",
                             position: "absolute", top: 3,
-                            left: profile.visible ? 23 : 3,
+                            left: (profile.visible !== false) ? 23 : 3,
                             transition: "left 0.2s",
                             boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
                           }} />
@@ -3443,11 +3835,11 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     <div style={{ fontSize: 12.5, color: "#9CA3AF", marginBottom: 14 }}>Select what {kid?.name} enjoys — this helps match with camps and friends</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {TYPES.map(t => {
-                        const active = profile.interests.has(t.value);
+                        const active = interests.has(t.value);
                         return (
                           <button key={t.value}
                             onClick={() => {
-                              const next = new Set(profile.interests);
+                              const next = new Set(interests);
                               active ? next.delete(t.value) : next.add(t.value);
                               updateKidProfile(profileKidId, "interests", next);
                             }}
@@ -3501,7 +3893,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   fontSize: 8, fontWeight: 800, marginLeft: i > 0 ? -6 : 0,
                                   position: "relative", zIndex: 4 - i,
                                 }}>
-                                  {m.child[0]}{m.name.split(" ")[1]?.[0] || ""}
+                                  {getMemberInitials(m.child, m.name)}
                                 </div>
                               ))}
                             </div>
@@ -3542,13 +3934,84 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     </div>
                   )}
 
+                  {/* Important Dates */}
+                  {(() => {
+                    const kidDates = importantDates.filter(d => d.kidId === profileKidId);
+                    const fmt = (iso) => { if (!iso) return ""; const d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+                    return (
+                      <div style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: "var(--radius-xl)", padding: "20px", boxShadow: "var(--shadow-sm)" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: "#1F2937" }}>Important Dates</div>
+                          <button onClick={() => setAddingDate(true)} style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "4px 10px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", cursor: "pointer" }}>+ Add</button>
+                        </div>
+
+                        {kidDates.length === 0 && !addingDate && (
+                          <div style={{ fontSize: 13, color: "#9CA3AF" }}>No important dates yet — add school holidays, last day of school, etc.</div>
+                        )}
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {kidDates.map(d => (
+                            <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: "#FFF8E6", border: "1px solid #F5D87A" }}>
+                              <span style={{ fontSize: 14, flexShrink: 0 }}>📅</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 600, fontSize: 13, color: "#1F2937" }}>{d.label}</div>
+                                <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>
+                                  {d.dateEnd && d.dateEnd !== d.dateStart ? `${fmt(d.dateStart)} – ${fmt(d.dateEnd)}` : fmt(d.dateStart)}
+                                </div>
+                              </div>
+                              <button onClick={async () => { await deleteImportantDate(d.id).catch(console.error); setImportantDates(prev => prev.filter(x => x.id !== d.id)); }}
+                                style={{ background: "none", border: "none", cursor: "pointer", color: "#D1D5DB", fontSize: 16, padding: "0 4px" }}
+                                onMouseEnter={e => e.currentTarget.style.color = "#EF4444"}
+                                onMouseLeave={e => e.currentTarget.style.color = "#D1D5DB"}
+                              >×</button>
+                            </div>
+                          ))}
+
+                          {addingDate && (
+                            <div style={{ padding: "12px", borderRadius: 8, background: "#F9FAFB", border: "1px solid #E5E7EB", display: "flex", flexDirection: "column", gap: 8 }}>
+                              <input autoFocus placeholder="Label (e.g. Last day of school)" value={newDateLabel} onChange={e => setNewDateLabel(e.target.value)}
+                                style={{ width: "100%", padding: "7px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none" }}
+                                onFocus={e => e.target.style.borderColor = "#3D6B1F"} onBlur={e => e.target.style.borderColor = "#E5E7EB"} />
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>Date</div>
+                                  <input type="date" value={newDateStart} onChange={e => setNewDateStart(e.target.value)}
+                                    style={{ width: "100%", padding: "7px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none" }} />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>End date (optional)</div>
+                                  <input type="date" value={newDateEnd} onChange={e => setNewDateEnd(e.target.value)}
+                                    style={{ width: "100%", padding: "7px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none" }} />
+                                </div>
+                              </div>
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <button disabled={!newDateLabel.trim() || !newDateStart || savingDate}
+                                  onClick={async () => {
+                                    setSavingDate(true);
+                                    const newDate = await saveImportantDate(profileKidId, newDateLabel.trim(), newDateStart, newDateEnd || null).catch(console.error);
+                                    if (newDate) setImportantDates(prev => [...prev, newDate]);
+                                    setNewDateLabel(""); setNewDateStart(""); setNewDateEnd(""); setAddingDate(false); setSavingDate(false);
+                                  }}
+                                  style={{ background: "#3D6B1F", border: "none", borderRadius: 7, padding: "7px 16px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer", opacity: newDateLabel.trim() && newDateStart ? 1 : 0.4 }}>
+                                  {savingDate ? "Saving..." : "Save"}
+                                </button>
+                                <button onClick={() => { setNewDateLabel(""); setNewDateStart(""); setNewDateEnd(""); setAddingDate(false); }}
+                                  style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "7px 14px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 500, color: "#6B7280", cursor: "pointer" }}>Cancel</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                 </div>
               </div>
             );
           })()}
 
           {/* ── CIRCLES TAB ── */}
-          {activeTab === "liveCircles" && (
+          {activeTab === "circles" && (
             <>
               <h1 className="section-title">My Circles</h1>
               <p className="section-sub">1st grade friends and other parent groups with whom you share camp plans.</p>
@@ -3582,29 +4045,29 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       {expandedMember?.circleId === circle.id && (
                         <div className="circle-members">
                           {circle.members.map((m) => {
-                            const memberCamps = m.camps.map((cid) => camps.find((c) => c.id === cid)).filter(Boolean);
+                            const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+                            const memberCamps = m.camps.map(cid => allCampPool.find(c => c.id === cid)).filter(Boolean);
                             const isMemberOpen = expandedMember?.memberId === m.id;
+                            const displayName = m.name || "Parent";
+                            const childDisplay = m.child || "";
+                            const initial1 = childDisplay?.[0]?.toUpperCase() || displayName?.[0]?.toUpperCase() || "?";
+                            const initial2 = displayName?.split(" ")?.[1]?.[0]?.toUpperCase() || "";
                             return (
                               <div key={m.id}>
                                 <div
                                   className="member-row"
-                                  onClick={() =>
-                                    setExpandedMember({
-                                      circleId: circle.id,
-                                      memberId: isMemberOpen ? null : m.id,
-                                    })
-                                  }
+                                  onClick={() => setExpandedMember({ circleId: circle.id, memberId: isMemberOpen ? null : m.id })}
                                 >
                                   <div className="member-left">
-                                    <div className="member-avatar-wrap" style={{fontSize:"11px",fontWeight:800,color:"#666"}}>{m.child[0]}{m.name.split(" ")[1]?.[0]}</div>
+                                    <div className="member-avatar-wrap" style={{ fontSize: "11px", fontWeight: 800, color: "#666" }}>{getMemberInitials(childDisplay, displayName)}</div>
                                     <div>
-                                      <div className="member-name">{m.name}</div>
-                                      <div className="member-child">Parent of {m.child}</div>
+                                      <div className="member-name">{displayName}</div>
+                                      <div className="member-child">{childDisplay ? `Parent of ${childDisplay}` : "No child added yet"}</div>
                                     </div>
                                   </div>
                                   <span className="member-camp-count">{memberCamps.length} camps</span>
                                 </div>
-                                {isMemberOpen && (
+                                {isMemberOpen && memberCamps.length > 0 && (
                                   <div className="member-camps-detail">
                                     {memberCamps.map((c) => (
                                       <div key={c.id} className="member-camp-pill">
@@ -3660,7 +4123,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       Create a New Circle
                     </div>
                     <input
-                      placeholder="e.g. Campbell Hall Kinder"
+                      placeholder="e.g. Brighton Elementary 1st grade"
                       value={newCircleName}
                       onChange={(e) => setNewCircleName(e.target.value)}
                       style={{ marginBottom: 12 }}
@@ -3757,13 +4220,20 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           const selectedKidsList = kids.filter(k => circleKidIds.has(k.id));
                           const kidsToJoin = selectedKidsList.length > 0 ? selectedKidsList : kids.slice(0, 1);
                           let lastResult = null;
-                          for (const kid of kidsToJoin) {
-                            lastResult = await joinCircleByCode(userId, userName, kid.name, joinCode.trim());
+                          if (kidsToJoin.length > 0) {
+                            for (const kid of kidsToJoin) {
+                              lastResult = await joinCircleByCode(userId, userName, kid.name, joinCode.trim());
+                            }
+                          } else {
+                            // No kids yet — join with just the parent name
+                            lastResult = await joinCircleByCode(userId, userName, "", joinCode.trim());
                           }
+                          console.log('Join result:', lastResult);
                           if (lastResult?.error) {
                             setJoinError(lastResult.error === "Already a member" ? "You're already in this circle!" : "Invalid invite code. Please check and try again.");
                           } else {
                             const updated = await getCircles(userId);
+                            console.log('Updated circles:', updated);
                             setAirtableCircles(updated);
                             setJoinCode("");
                             setCircleKidIds(new Set());
