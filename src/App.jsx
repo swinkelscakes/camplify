@@ -201,8 +201,16 @@ function Camplify({ userId, userName, userEmail }) {
       setImportKidId(kidsData[0]?.id || null);
 
       // Load circles independently so failure doesn't crash the app
-      getCircles(userId).then(circlesData => {
+      // Also refresh camps after circles load to catch camps added by friends
+      getCircles(userId).then(async circlesData => {
         setAirtableCircles(circlesData);
+        // If friends have camps we don't know about, reload camps
+        const friendCampIds = new Set(circlesData.flatMap(c => c.members.flatMap(m => m.camps)));
+        const knownCampIds = new Set(campsData.map(c => c.id));
+        const hasUnknown = [...friendCampIds].some(id => !knownCampIds.has(id));
+        if (hasUnknown) {
+          getCamps().then(setAirtableCamps).catch(console.error);
+        }
       }).catch(err => console.warn('Circles failed to load:', err));
       setAirtableKids(kidsData);
       setSelectedKids(new Set(kidsData.map(k => k.id)));
@@ -4431,8 +4439,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           if (lastResult?.error) {
                             setJoinError(lastResult.error === "Already a member" ? "You're already in this circle!" : "Invalid invite code. Please check and try again.");
                           } else {
-                            const updated = await getCircles(userId);
-                            console.log('Updated circles:', updated);
+                            // Reload both camps AND circles so friend camps are visible
+                            const [updatedCamps, updated] = await Promise.all([
+                              getCamps(),
+                              getCircles(userId),
+                            ]);
+                            setAirtableCamps(updatedCamps);
                             setAirtableCircles(updated);
                             setJoinCode("");
                             setCircleKidIds(new Set());
