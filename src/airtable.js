@@ -102,6 +102,7 @@ export const getKids = async (userId) => {
       zipcode: f.Zipcode || '',
       visible: f.Visible || false,
       bio: f.Bio || '',
+      bffs: f.BFFs ? f.BFFs.split(',').filter(Boolean) : [],
       camps: [],
     };
   });
@@ -122,6 +123,7 @@ export const saveKid = async (userId, name, initials) => {
     zipcode: '',
     visible: false,
     bio: '',
+    bffs: [],
     camps: [],
   };
 };
@@ -135,6 +137,7 @@ export const updateKid = async (kidId, fields) => {
   if (fields.zipcode !== undefined) airtableFields.Zipcode = fields.zipcode;
   if (fields.visible !== undefined) airtableFields.Visible = fields.visible;
   if (fields.bio !== undefined) airtableFields.Bio = fields.bio;
+  if (fields.bffs !== undefined) airtableFields.BFFs = fields.bffs.join(',');
   await base('Kids').update(kidId, airtableFields);
 };
 
@@ -240,60 +243,57 @@ export const deleteBreak = async (breakId) => {
 export const updateCamp = async (campId, fields) => {
   const airtableFields = {};
   if (fields.name !== undefined) airtableFields.Name = fields.name;
-  if (fields.dateStart !== undefined) airtableFields.DateStart = fields.dateStart;
-  if (fields.dateEnd !== undefined) airtableFields.DateEnd = fields.dateEnd;
+  if (fields.dateStart !== undefined) airtableFields.DateStart = fields.dateStart || null;
+  if (fields.dateEnd !== undefined) airtableFields.DateEnd = fields.dateEnd || null;
   if (fields.location !== undefined) airtableFields.Location = fields.location;
   if (fields.address !== undefined) airtableFields.Address = fields.address;
-  if (fields.timeStart !== undefined) airtableFields.TimeStart = fields.timeStart;
-  if (fields.timeEnd !== undefined) airtableFields.TimeEnd = fields.timeEnd;
-  if (fields.beforeCareStart !== undefined) airtableFields.BeforeCareStart = fields.beforeCareStart;
-  if (fields.beforeCareEnd !== undefined) airtableFields.BeforeCareEnd = fields.beforeCareEnd;
+  if (fields.timeStart !== undefined) airtableFields.TimeStart = fields.timeStart || null;
+  if (fields.timeEnd !== undefined) airtableFields.TimeEnd = fields.timeEnd || null;
+  if (fields.beforeCareStart !== undefined) airtableFields.BeforeCareStart = fields.beforeCareStart || null;
+  if (fields.beforeCareEnd !== undefined) airtableFields.BeforeCareEnd = fields.beforeCareEnd || null;
   if (fields.beforeCareCost !== undefined) airtableFields['BeforeCare Cost'] = fields.beforeCareCost ? Number(fields.beforeCareCost) : null;
-  if (fields.afterCareStart !== undefined) airtableFields.AfterCareStart = fields.afterCareStart;
-  if (fields.afterCareEnd !== undefined) airtableFields.AfterCareEnd = fields.afterCareEnd;
+  if (fields.afterCareStart !== undefined) airtableFields.AfterCareStart = fields.afterCareStart || null;
+  if (fields.afterCareEnd !== undefined) airtableFields.AfterCareEnd = fields.afterCareEnd || null;
   if (fields.afterCareCost !== undefined) airtableFields['AfterCare Cost'] = fields.afterCareCost ? Number(fields.afterCareCost) : null;
-  if (fields.campType !== undefined) airtableFields.Type = Array.isArray(fields.campType) ? fields.campType.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t) : [];
-  if (fields.days !== undefined) airtableFields.Days = fields.days;
+  if (fields.campType !== undefined) airtableFields.Type = Array.isArray(fields.campType) ? fields.campType.filter(Boolean).map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t) : [];
+  if (fields.days !== undefined) airtableFields.Days = (fields.days || []).filter(Boolean);
   if (fields.ageMin !== undefined) airtableFields.AgeMin = fields.ageMin ? Number(fields.ageMin) : null;
   if (fields.ageMax !== undefined) airtableFields.AgeMax = fields.ageMax ? Number(fields.ageMax) : null;
-  if (fields.gradeMin !== undefined) airtableFields.GradeMin = fields.gradeMin;
-  if (fields.gradeMax !== undefined) airtableFields.GradeMax = fields.gradeMax;
+  if (fields.gradeMin !== undefined) airtableFields.GradeMin = fields.gradeMin || null;
+  if (fields.gradeMax !== undefined) airtableFields.GradeMax = fields.gradeMax || null;
   if (fields.cost !== undefined) airtableFields.Cost = fields.cost ? Number(fields.cost) : null;
   if (fields.url !== undefined) airtableFields.URL = fields.url;
-  if (fields.notes !== undefined) airtableFields.Notes = fields.notes;
-  if (fields.discountCode !== undefined) airtableFields.DiscountCode = fields.discountCode;
   await base('Camps').update(campId, airtableFields);
 };
 
 // Save a new camp to Airtable
 export const saveCamp = async (userId, fields) => {
-  const timeStart = fields.timeStart || '';
-  const timeEnd = fields.timeEnd || '';
   const airtableFields = {
     Name: fields.name,
-    DateStart: fields.dateStart,
-    DateEnd: fields.dateEnd,
-    Location: fields.location || '',
-    Address: fields.address || '',
-    TimeStart: timeStart,
-    TimeEnd: timeEnd,
-    BeforeCareStart: fields.beforeCareStart || '',
-    BeforeCareEnd: fields.beforeCareEnd || '',
-    'BeforeCare Cost': fields.beforeCareCost ? Number(fields.beforeCareCost) : null,
-    AfterCareStart: fields.afterCareStart || '',
-    AfterCareEnd: fields.afterCareEnd || '',
-    'AfterCare Cost': fields.afterCareCost ? Number(fields.afterCareCost) : null,
-    Type: Array.isArray(fields.campType) ? fields.campType.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t) : [],
-    Days: fields.days || [],
-    AgeMin: fields.ageMin ? Number(fields.ageMin) : null,
-    AgeMax: fields.ageMax ? Number(fields.ageMax) : null,
-    GradeMin: fields.gradeMin || '',
-    GradeMax: fields.gradeMax || '',
-    Cost: fields.cost ? Number(fields.cost) : null,
-    URL: fields.url || '',
-    Notes: fields.notes || '',
     UserId: userId,
   };
+  if (fields.dateStart) airtableFields.DateStart = fields.dateStart;
+  if (fields.dateEnd) airtableFields.DateEnd = fields.dateEnd;
+  if (fields.location) airtableFields.Location = fields.location;
+  if (fields.address) airtableFields.Address = fields.address;
+  if (fields.timeStart) airtableFields.TimeStart = fields.timeStart;
+  if (fields.timeEnd) airtableFields.TimeEnd = fields.timeEnd;
+  if (fields.beforeCareStart) airtableFields.BeforeCareStart = fields.beforeCareStart;
+  if (fields.beforeCareEnd) airtableFields.BeforeCareEnd = fields.beforeCareEnd;
+  if (fields.beforeCareCost) airtableFields['BeforeCare Cost'] = Number(fields.beforeCareCost);
+  if (fields.afterCareStart) airtableFields.AfterCareStart = fields.afterCareStart;
+  if (fields.afterCareEnd) airtableFields.AfterCareEnd = fields.afterCareEnd;
+  if (fields.afterCareCost) airtableFields['AfterCare Cost'] = Number(fields.afterCareCost);
+  if (fields.ageMin) airtableFields.AgeMin = Number(fields.ageMin);
+  if (fields.ageMax) airtableFields.AgeMax = Number(fields.ageMax);
+  if (fields.gradeMin) airtableFields.GradeMin = fields.gradeMin;
+  if (fields.gradeMax) airtableFields.GradeMax = fields.gradeMax;
+  if (fields.cost) airtableFields.Cost = Number(fields.cost);
+  if (fields.url) airtableFields.URL = fields.url;
+  const campType = Array.isArray(fields.campType) ? fields.campType : (fields.campType ? [fields.campType] : []);
+  if (campType.length > 0) airtableFields.Type = campType.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t);
+  const days = fields.days || [];
+  if (days.length > 0) airtableFields.Days = days;
   const record = await base('Camps').create(airtableFields);
   return record.id;
 };
@@ -348,7 +348,10 @@ export const getCircles = async (userId) => {
           // Find all kids for this user
           const memberKids = allKids.filter(k => k.fields.UserId === memberUserId);
           // Find the specific kid this CircleMembers record is for (by name match)
-          const specificKid = memberKids.find(k => k.fields.Name === childName);
+          // Match kid by exact name first, then by first name only if unambiguous
+          const exactMatch = memberKids.find(k => k.fields.Name === childName);
+          const firstNameMatches = memberKids.filter(k => k.fields.Name?.split(' ')[0] === childName?.split(' ')[0]);
+          const specificKid = exactMatch || (firstNameMatches.length === 1 ? firstNameMatches[0] : null);
           // Only visible if the specific kid has Visible === true
           const isVisible = specificKid ? specificKid.fields.Visible === true : false;
           // Only use visible kids for camp/break lookups
@@ -389,6 +392,13 @@ export const getCircles = async (userId) => {
             campStatus: memberCampStatus,
             breaks: memberBreaks,
             visible: hasVisibleKid,
+            profile: specificKid ? {
+              age: specificKid.fields.Age || '',
+              bio: specificKid.fields.Bio || '',
+              zipcode: specificKid.fields.Zipcode || '',
+              interests: specificKid.fields.Interests || [],
+              visible: specificKid.fields.Visible === true,
+            } : {},
           };
         }),
     }));
