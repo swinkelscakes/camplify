@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, deleteReview } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -78,7 +78,9 @@ const campInWeek = (camp, weekIso) => {
   const wStart = weekIso;
   const d = new Date(weekIso + "T12:00:00"); d.setDate(d.getDate() + 6);
   const wEnd = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  return camp.dateStart <= wEnd && (camp.dateEnd || camp.dateStart) >= wStart;
+  // Swap if dateEnd is before dateStart (data entry error)
+  const effectiveEnd = camp.dateEnd && camp.dateEnd >= camp.dateStart ? camp.dateEnd : camp.dateStart;
+  return camp.dateStart <= wEnd && effectiveEnd >= wStart;
 };
 const STATUS_CONFIG = {
   enrolled: { label: "Enrolled", bg: "#5a8f35", light: "#eef5e8" },
@@ -209,7 +211,28 @@ function Camplify({ userId, userName, userEmail }) {
         const knownCampIds = new Set(campsData.map(c => c.id));
         const hasUnknown = [...friendCampIds].some(id => !knownCampIds.has(id));
         if (hasUnknown) {
-          getCamps().then(setAirtableCamps).catch(console.error);
+          getCamps().then(freshCamps => {
+            setAirtableCamps(freshCamps);
+            // Also reload reviews for newly discovered camps
+            const allIds = freshCamps.map(c => c.id);
+            if (allIds.length > 0) {
+              getReviews(allIds).then(reviewsData => {
+                const bycamp = {};
+                reviewsData.forEach(r => { if (!bycamp[r.campId]) bycamp[r.campId] = []; bycamp[r.campId].push(r); });
+                setCampReviews(bycamp);
+              }).catch(console.error);
+            }
+          }).catch(console.error);
+        } else {
+          // Still refresh reviews in case circle members added reviews since last load
+          const allIds = campsData.map(c => c.id);
+          if (allIds.length > 0) {
+            getReviews(allIds).then(reviewsData => {
+              const bycamp = {};
+              reviewsData.forEach(r => { if (!bycamp[r.campId]) bycamp[r.campId] = []; bycamp[r.campId].push(r); });
+              setCampReviews(bycamp);
+            }).catch(console.error);
+          }
         }
       }).catch(err => console.warn('Circles failed to load:', err));
       setAirtableKids(kidsData);
@@ -242,6 +265,19 @@ function Camplify({ userId, userName, userEmail }) {
         console.log('Loaded enrollments:', enrollments);
         console.log('Loaded breaks:', breaks);
         setImportantDates(importantDatesData);
+
+        // Load reviews for all known camps
+        const campIdList = campsData.map(c => c.id);
+        if (campIdList.length > 0) {
+          getReviews(campIdList).then(reviewsData => {
+            const bycamp = {};
+            reviewsData.forEach(r => {
+              if (!bycamp[r.campId]) bycamp[r.campId] = [];
+              bycamp[r.campId].push(r);
+            });
+            setCampReviews(bycamp);
+          }).catch(console.error);
+        }
         const newStatus = {};
         const newIds = {};
         enrollments.forEach(e => {
@@ -716,6 +752,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [newDateEnd, setNewDateEnd] = useState("");
   const [savingDate, setSavingDate] = useState(false); // kids to add when creating/joining
   const [friendProfilePopover, setFriendProfilePopover] = useState(null); // { person, x, y }
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [campTypeFilter, setCampTypeFilter] = useState(new Set());
   const [campSort, setCampSort] = useState("date");
   const [focusedCampId, setFocusedCampId] = useState(null);
@@ -1601,21 +1638,87 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             {(() => {
               const { signOut } = useClerk();
               return (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 12 }}>
-                  <div style={{
-                    width: 32, height: 32, borderRadius: "50%", background: "#3D6B1F",
-                    color: "white", display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 700, flexShrink: 0, cursor: "default",
-                    title: userName,
-                  }}>{(userName || "P")[0]}</div>
+                <div style={{ position: "relative", marginLeft: 12 }}>
                   <button
-                    onClick={() => signOut()}
+                    onClick={() => setShowUserMenu(v => !v)}
                     style={{
-                      background: "none", border: "1px solid #E5E7EB", borderRadius: 7,
-                      padding: "5px 10px", fontFamily: "Inter, sans-serif",
-                      fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer",
+                      width: 36, height: 36, borderRadius: "50%", background: "#3D6B1F",
+                      color: "white", display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 13, fontWeight: 700, flexShrink: 0, cursor: "pointer",
+                      border: showUserMenu ? "2.5px solid #7BAE5A" : "2.5px solid transparent",
+                      transition: "border 0.15s",
                     }}
-                  >Sign out</button>
+                    title={parentName || userName}
+                  >{(parentName || userName || "P")[0].toUpperCase()}</button>
+
+                  {showUserMenu && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setShowUserMenu(false)} />
+                      <div style={{
+                        position: "absolute", top: "calc(100% + 8px)", right: 0,
+                        width: 260, background: "white", borderRadius: 14,
+                        boxShadow: "0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)",
+                        border: "1px solid #E5E7EB", zIndex: 100, overflow: "hidden",
+                      }} onClick={e => e.stopPropagation()}>
+                        {/* Header */}
+                        <div style={{ background: "#3D6B1F", padding: "14px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(255,255,255,0.2)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>
+                              {(parentName || userName || "P")[0].toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{parentName || userName}</div>
+                              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.7)", marginTop: 1 }}>{userEmail}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Settings */}
+                        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                          <div>
+                            <label style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: 5 }}>Your Name</label>
+                            <input
+                              value={parentName}
+                              onChange={e => setParentName(e.target.value)}
+                              onBlur={async () => {
+                                if (parentName.trim()) {
+                                  await updateParentName(userId, parentName.trim()).catch(console.error);
+                                  getCircles(userId).then(setAirtableCircles).catch(console.error);
+                                }
+                              }}
+                              placeholder="Your name (shown to other parents)"
+                              style={{ width: "100%", padding: "8px 10px", border: "1.5px solid #E5E7EB", borderRadius: 8, fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 500, color: "#1F2937", outline: "none", boxSizing: "border-box" }}
+                              onFocus={e => e.target.style.borderColor = "#3D6B1F"}
+                            />
+                          </div>
+
+                          {kids.length > 0 && (
+                            <div>
+                              <label style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: 5 }}>My Kids</label>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {kids.map(k => (
+                                  <button key={k.id} onClick={() => { setProfileKidId(k.id); setActiveTab("kids"); setShowUserMenu(false); }}
+                                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 20, border: "1.5px solid #E5E7EB", background: "white", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", cursor: "pointer" }}>
+                                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#3D6B1F", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800 }}>{k.initials}</div>
+                                    {k.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ borderTop: "1px solid #F3F4F6", padding: "10px 16px" }}>
+                          <button
+                            onClick={() => signOut()}
+                            style={{ width: "100%", background: "none", border: "1px solid #E5E7EB", borderRadius: 8, padding: "8px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 600, color: "#6B7280", cursor: "pointer" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "#F9FAFB"; e.currentTarget.style.color = "#374151"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#6B7280"; }}
+                          >Sign out</button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })()}
@@ -1806,7 +1909,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
                               onClick={e => {
                                 if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY });
-                                else if (isBreak && person.isMyKid) { const nl = window.prompt("Break label:", breakLabel); if (nl !== null) setKidBreak(person.id, w.num, nl || "Break"); }
+                                else if (isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY, editBreak: true, breakLabel });
                                 else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
                               }}>
                               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px" }}>
@@ -2011,7 +2114,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 return (
                                   <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, display: "flex", alignItems: "stretch" }}>
                                     {isBreak ? (
-                                      <div onClick={() => { if (person.isMyKid) { const nl = window.prompt("Break label:", breakLabel); if (nl !== null) setKidBreak(person.id, w.num, nl || "Break"); } }}
+                                      <div onClick={() => { if (person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: 0, y: 0, editBreak: true, breakLabel }); }}
                                         style={{ width: "100%", borderRadius: 12, background: "#DCFCE7", cursor: person.isMyKid ? "pointer" : "default", display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", position: "relative" }}>
 
                                         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, position: "relative" }}>
@@ -2231,6 +2334,64 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         return name.includes(searchQuery) || loc.includes(searchQuery);
                       })
                     : weekCampsAvail;
+                  // Break edit mode
+                  if (gridAddCell.editBreak) {
+                    return (
+                      <div style={{ position: "fixed", inset: 0, zIndex: 50 }} onClick={() => setGridAddCell(null)}>
+                        <div onClick={e => e.stopPropagation()} style={{
+                          position: "fixed",
+                          left: Math.min((gridAddCell.x || window.innerWidth / 2) + 10, window.innerWidth - 280),
+                          top: Math.min((gridAddCell.y || window.innerHeight / 2) + 10, window.innerHeight - 220),
+                          width: 260, background: "white",
+                          borderRadius: "var(--radius-xl)",
+                          boxShadow: "0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)",
+                          border: "1px solid #e5e7eb", overflow: "hidden", zIndex: 51,
+                        }}>
+                          <div style={{ background: "#15803D", padding: "10px 14px", borderRadius: "var(--radius-xl) var(--radius-xl) 0 0" }}>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                              {computedWeeks.find(w => w.num === gridAddCell.weekNum)?.dates}
+                            </div>
+                            <div style={{ fontSize: 13, color: "white", fontWeight: 700, marginTop: 2 }}>🌿 {gridAddCell.breakLabel} — {kid?.name}</div>
+                          </div>
+                          <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                            <div style={{ fontSize: 11.5, fontWeight: 600, color: "#6B7280" }}>Rename break</div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input
+                                autoFocus
+                                defaultValue={gridAddCell.breakLabel}
+                                id="break-rename-input"
+                                style={{ flex: 1, padding: "6px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none" }}
+                                onFocus={e => e.target.style.borderColor = "#15803D"}
+                                onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") {
+                                    setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, e.target.value.trim() || "Break");
+                                    setGridAddCell(null);
+                                  }
+                                  if (e.key === "Escape") setGridAddCell(null);
+                                }}
+                              />
+                              <button onClick={() => {
+                                const val = document.getElementById("break-rename-input")?.value?.trim() || "Break";
+                                setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, val);
+                                setGridAddCell(null);
+                              }} style={{ background: "#15803D", border: "none", borderRadius: 7, padding: "6px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, color: "white", cursor: "pointer" }}>Save</button>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, undefined);
+                                setGridAddCell(null);
+                              }}
+                              style={{ width: "100%", background: "none", border: "1.5px solid #FCA5A5", borderRadius: 7, padding: "7px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 600, color: "#DC2626", cursor: "pointer", transition: "all 0.15s" }}
+                              onMouseEnter={e => { e.currentTarget.style.background = "#FEF2F2"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+                            >🗑 Remove break</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div style={{ position: "fixed", inset: 0, zIndex: 50 }} onClick={() => { setGridAddCell(null); setCampSearch(""); }}>
                       <div
@@ -3031,10 +3192,13 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                             {/* Reviews section */}
                             {(() => {
-                              // Only show reviews from people in shared liveCircles
-                              const myCircleIds = new Set(liveCircles.map(c => c.id));
+                              // Show reviews from yourself or anyone in your circles
+                              const circleUserIds = new Set([
+                                userId,
+                                ...liveCircles.flatMap(c => c.members.map(m => m.userId))
+                              ]);
                               const visibleReviews = (campReviews[camp.id] || []).filter(r =>
-                                r.circleIds.some(cid => myCircleIds.has(cid))
+                                circleUserIds.has(r.userId)
                               );
                               const draft = reviewDraft[camp.id] || { rating: 0, text: "" };
                               const isWriting = showReviewForm === camp.id;
@@ -3091,17 +3255,17 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                         <button
                                           disabled={!draft.rating || !draft.text.trim()}
-                                          onClick={() => {
+                                          onClick={async () => {
                                             if (!draft.rating || !draft.text.trim()) return;
-                                            const newReview = {
-                                              id: Date.now(), authorName: "You", authorChild: kids[0]?.name,
-                                              circleIds: liveCircles.map(c => c.id),
-                                              rating: draft.rating, text: draft.text.trim(),
-                                              date: new Date().toISOString().slice(0, 10),
-                                            };
-                                            setCampReviews(prev => ({ ...prev, [camp.id]: [newReview, ...(prev[camp.id] || [])] }));
-                                            setReviewDraft(prev => ({ ...prev, [camp.id]: { rating: 0, text: "" } }));
-                                            setShowReviewForm(null);
+                                            const authorChild = (profileKidId ? kids.find(k => k.id === profileKidId)?.name : kids[0]?.name) || kids[0]?.name || "";
+                                            try {
+                                              const saved = await saveReview(camp.id, userId, parentName || userName, authorChild, draft.rating, draft.text.trim());
+                                              setCampReviews(prev => ({ ...prev, [camp.id]: [saved, ...(prev[camp.id] || [])] }));
+                                              setReviewDraft(prev => ({ ...prev, [camp.id]: { rating: 0, text: "" } }));
+                                              setShowReviewForm(null);
+                                            } catch(e) {
+                                              console.error("saveReview error:", e);
+                                            }
                                           }}
                                           style={{
                                             background: "#3D6B1F", border: "none", borderRadius: 7,

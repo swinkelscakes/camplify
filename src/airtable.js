@@ -532,3 +532,53 @@ export const saveImportantDate = async (kidId, label, dateStart, dateEnd) => {
 export const deleteImportantDate = async (dateId) => {
   await base('ImportantDates').destroy(dateId);
 };
+
+// ── REVIEWS ──
+
+export const getReviews = async (campIds) => {
+  if (!campIds || campIds.length === 0) return [];
+  try {
+    const records = await base('Reviews').select().all();
+    return records
+      .filter(r => r.fields.Camp && campIds.includes(r.fields.Camp[0]))
+      .map(r => ({
+        id: r.id,
+        campId: r.fields.Camp ? r.fields.Camp[0] : '',
+        userId: r.fields.UserId || '',
+        authorName: r.fields.AuthorName || '',
+        authorChild: r.fields.AuthorChild || '',
+        rating: r.fields.Rating || 0,
+        text: r.fields.Text || '',
+        date: r.fields.Date || '',
+      }));
+  } catch (e) {
+    console.error('Error loading reviews:', e);
+    return [];
+  }
+};
+
+export const saveReview = async (campId, userId, authorName, authorChild, rating, text) => {
+  const record = await base('Reviews').create({
+    Camp: [campId],
+    UserId: userId,
+    AuthorName: authorName,
+    AuthorChild: authorChild,
+    Rating: rating,
+    Text: text,
+    Date: new Date().toISOString().slice(0, 10),
+  });
+  return {
+    id: record.id,
+    campId,
+    userId,
+    authorName,
+    authorChild,
+    rating,
+    text,
+    date: record.fields.Date || new Date().toISOString().slice(0, 10),
+  };
+};
+
+export const deleteReview = async (reviewId) => {
+  await base('Reviews').destroy(reviewId);
+};
