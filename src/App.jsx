@@ -1633,8 +1633,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             ).sort((a, b) => {
               // BFFs (from any of my kids) float to the top
               const myKidBffs = kids.flatMap(k => Array.from(getBffs(k.id)));
-              const aIsBff = myKidBffs.includes(a.userId);
-              const bIsBff = myKidBffs.includes(b.userId);
+              const aIsBff = a.userId ? myKidBffs.includes(a.userId) : false;
+              const bIsBff = b.userId ? myKidBffs.includes(b.userId) : false;
               return aIsBff === bIsBff ? 0 : aIsBff ? -1 : 1;
             });
 
@@ -1894,7 +1894,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 style={{ fontSize: 13, fontWeight: 700, color: person.isMyKid ? "#3D6B1F" : (person.circleColor || "#374151"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
                                 {person.isMyKid ? person.name : (person.child || person.name)}
                               </span>
-                              {!person.isMyKid && kids.some(k => getBffs(k.id).has(person.userId)) && (
+                              {!person.isMyKid && person.userId && kids.some(k => getBffs(k.id).has(person.userId)) && (
                                 <span style={{ fontSize: 10, lineHeight: 1, flexShrink: 0 }} title="BFF">⭐</span>
                               )}
                             </div>
@@ -2710,7 +2710,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             {(() => {
                               const myKidBffIds = new Set(kids.flatMap(k => Array.from(getBffs(k.id))));
                               const allMembers = liveCircles.flatMap(c => c.members.map(m => ({
-                                ...m, circleColor: c.color, isBff: myKidBffIds.has(m.userId),
+                                ...m, circleColor: c.color, isBff: m.userId ? myKidBffIds.has(m.userId) : false,
                                 status: m.campStatus?.[camp.id] || 'enrolled',
                               }))).filter(m => m.camps.includes(camp.id));
                               const myKidMembers = kids.map(k => {
@@ -4238,8 +4238,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             const isMemberOpen = expandedMember?.memberId === m.id;
                             const displayName = m.name || "Parent";
                             const childDisplay = m.child || "";
-                            const initial1 = childDisplay?.[0]?.toUpperCase() || displayName?.[0]?.toUpperCase() || "?";
-                            const initial2 = displayName?.split(" ")?.[1]?.[0]?.toUpperCase() || "";
                             return (
                               <div key={m.id}>
                                 <div
@@ -4256,7 +4254,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     {/* BFF star — per kid */}
                                     {kids.map(k => {
-                                      const isBff = getBffs(k.id).has(m.userId);
+                                      const isBff = m.userId ? getBffs(k.id).has(m.userId) : false;
                                       return (
                                         <button key={k.id}
                                           title={`${isBff ? "Remove" : "Mark"} as BFF for ${k.name}`}
