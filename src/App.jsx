@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, deleteReview } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, deleteReview, updateCircle } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -348,6 +348,8 @@ function Camplify({ userId, userName, userEmail }) {
     return next;
   });
   const [showAddCircle, setShowAddCircle] = useState(false);
+  const [editingCircleId, setEditingCircleId] = useState(null);
+  const [editingCircleName, setEditingCircleName] = useState("");
   const [newCircleName, setNewCircleName] = useState("");
   const [expandedMember, setExpandedMember] = useState(null);
   const [selectedKids, setSelectedKids] = useState(new Set());
@@ -4492,7 +4494,32 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             style={{ background: circle.color + "22", color: circle.color }}
                           ></div>
                           <div>
-                            <div className="circle-name">{circle.name}</div>
+                            {editingCircleId === circle.id ? (
+                              <input
+                                autoFocus
+                                value={editingCircleName}
+                                onChange={e => setEditingCircleName(e.target.value)}
+                                onBlur={async () => {
+                                  const name = editingCircleName.trim();
+                                  if (name && name !== circle.name) {
+                                    await updateCircle(circle.id, name).catch(console.error);
+                                    setAirtableCircles(prev => prev.map(c => c.id === circle.id ? { ...c, name } : c));
+                                  }
+                                  setEditingCircleId(null);
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") e.target.blur();
+                                  if (e.key === "Escape") { setEditingCircleId(null); }
+                                }}
+                                onClick={e => e.stopPropagation()}
+                                style={{ fontSize: 15, fontWeight: 700, color: "var(--gray-900)", border: "none", borderBottom: "2px solid #3D6B1F", outline: "none", background: "transparent", fontFamily: "Inter, sans-serif", padding: "0 2px", width: "100%" }}
+                              />
+                            ) : (
+                              <div className="circle-name" style={{ cursor: "text" }}
+                                onClick={e => { e.stopPropagation(); setEditingCircleId(circle.id); setEditingCircleName(circle.name); }}
+                                title="Click to rename"
+                              >{circle.name} <span style={{ fontSize: 11, color: "#D1D5DB", marginLeft: 4 }}>✎</span></div>
+                            )}
                             <div className="circle-count">{circle.members.length} families</div>
                           </div>
                         </div>

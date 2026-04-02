@@ -427,6 +427,11 @@ export const createCircle = async (userId, name, color) => {
   };
 };
 
+// Update a circle's name
+export const updateCircle = async (circleId, name) => {
+  await base('Circles').update(circleId, { Name: name });
+};
+
 // Join a circle by invite code
 export const joinCircleByCode = async (userId, parentName, childName, inviteCode) => {
   // Find circle with this code
