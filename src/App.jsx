@@ -979,6 +979,23 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
       friendCampMap[fc.id].friends.push({ name: fc.friendName, initials: fc.friendInitials });
   });
 
+  // Show a minimal loading screen while data fetches to avoid flashing empty states
+  if (loading) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB", flexDirection: "column", gap: 16 }}>
+      <div style={{ fontSize: 28, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px" }}>Camplify</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {[0,1,2].map(i => (
+          <div key={i} style={{
+            width: 8, height: 8, borderRadius: "50%", background: "#3D6B1F",
+            animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
+            opacity: 0.7,
+          }} />
+        ))}
+      </div>
+      <style>{`@keyframes bounce { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }`}</style>
+    </div>
+  );
+
   return (
     <>
       <style>{`
@@ -1991,8 +2008,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               );
             }
 
-            // Empty state for brand new users
-            if (kids.length === 0 && friendRows.length === 0) {
+            // Empty state for brand new users (only show after loading completes)
+            if (!loading && kids.length === 0 && friendRows.length === 0) {
               return (
                 <div style={{ textAlign: "center", padding: "80px 20px" }}>
                   <div style={{ fontSize: 40, marginBottom: 16 }}>🏕️</div>
