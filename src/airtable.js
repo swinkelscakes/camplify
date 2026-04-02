@@ -538,7 +538,9 @@ export const deleteImportantDate = async (dateId) => {
 export const getReviews = async (campIds) => {
   if (!campIds || campIds.length === 0) return [];
   try {
-    const records = await base('Reviews').select().all();
+    let records;
+    try { records = await base('Reviews').select().all(); }
+    catch (tableErr) { return []; } // Table may not exist yet
     return records
       .filter(r => r.fields.Camp && campIds.includes(r.fields.Camp[0]))
       .map(r => ({

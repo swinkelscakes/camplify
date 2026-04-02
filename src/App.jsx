@@ -129,7 +129,9 @@ const AvatarStack = ({ members }) => {
           <div key={m.id} title={(() => {
             const displayName = m.isMyKid
               ? m.name
-              : `${m.child} ${m.name?.split(" ")[1]?.[0] || ""}.`;
+              : m.child
+                ? `${m.child} (${m.name || "parent"})`
+                : (m.name || "Unknown");
             const statusLabel = m.status === "enrolled" ? "Enrolled" : m.status === "thinking" ? "Thinking about it" : m.status === "waitlist" ? "Waitlisted" : "Enrolled";
             return `${displayName} · ${statusLabel}`;
           })()} style={{
@@ -220,7 +222,7 @@ function Camplify({ userId, userName, userEmail }) {
                 const bycamp = {};
                 reviewsData.forEach(r => { if (!bycamp[r.campId]) bycamp[r.campId] = []; bycamp[r.campId].push(r); });
                 setCampReviews(bycamp);
-              }).catch(console.error);
+              }).catch(e => console.warn('Reviews load failed:', e?.message));
             }
           }).catch(console.error);
         } else {
@@ -231,7 +233,7 @@ function Camplify({ userId, userName, userEmail }) {
               const bycamp = {};
               reviewsData.forEach(r => { if (!bycamp[r.campId]) bycamp[r.campId] = []; bycamp[r.campId].push(r); });
               setCampReviews(bycamp);
-            }).catch(console.error);
+            }).catch(e => console.warn('Reviews load failed:', e?.message));
           }
         }
       }).catch(err => console.warn('Circles failed to load:', err));
@@ -276,7 +278,7 @@ function Camplify({ userId, userName, userEmail }) {
               bycamp[r.campId].push(r);
             });
             setCampReviews(bycamp);
-          }).catch(console.error);
+          }).catch(e => console.warn('Reviews load failed (table may not exist yet):', e?.message));
         }
         const newStatus = {};
         const newIds = {};
@@ -294,6 +296,31 @@ function Camplify({ userId, userName, userEmail }) {
         });
         setCampStatus(newStatus);
         setEnrollmentIds(newIds);
+
+        // Scroll overview to week before first future enrolled camp
+        setTimeout(() => {
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const allPool = [...campsData];
+          const enrolledIds = new Set(Object.keys(newStatus));
+          const futureCamps = allPool.filter(c =>
+            enrolledIds.has(c.id) && c.dateStart && (c.dateEnd || c.dateStart) >= todayIso
+          ).sort((a, b) => a.dateStart.localeCompare(b.dateStart));
+          if (futureCamps.length === 0) return;
+          const firstDate = futureCamps[0].dateStart;
+          const d = new Date(firstDate + "T12:00:00");
+          const dow = d.getDay();
+          d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+          const todayMon = new Date(todayIso + "T12:00:00");
+          const dow2 = todayMon.getDay();
+          todayMon.setDate(todayMon.getDate() - (dow2 === 0 ? 6 : dow2 - 1));
+          const diffWeeks = Math.round((d - todayMon) / (7 * 24 * 3600 * 1000));
+          const targetIdx = Math.max(0, diffWeeks - 1);
+          setMobileWeekOffset(targetIdx);
+          setTimeout(() => {
+            const el = document.getElementById("grid-scroll-container");
+            if (el) el.scrollLeft = targetIdx * 156;
+          }, 150);
+        }, 50);
 
         // Restore kid breaks
         const newKidBreaks = {};
@@ -569,8 +596,27 @@ function Camplify({ userId, userName, userEmail }) {
       const formSnapshot = { ...manualForm };
       const savedId = await saveCamp(userId, formSnapshot);
       if (savedId) {
-        setDynamicCamps(prev => prev.map(c => c.id === id ? { ...c, id: savedId } : c));
+        // Remove from dynamicCamps (temp) and add to airtableCamps (permanent) to avoid duplicate
+        setDynamicCamps(prev => prev.filter(c => c.id !== id));
         setAirtableCamps(prev => [...prev, { ...newCamp, id: savedId, userId }]);
+        // Update any enrollments that used the temp id
+        setCampStatus(prev => {
+          if (!prev[id]) return prev;
+          const next = { ...prev };
+          next[savedId] = next[id];
+          delete next[id];
+          return next;
+        });
+        setEnrollmentIds(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (k.startsWith(id + '-')) {
+              next[k.replace(id + '-', savedId + '-')] = next[k];
+              delete next[k];
+            }
+          });
+          return next;
+        });
       }
     } catch(e) {
       console.error('saveCamp error:', e);
@@ -1730,6 +1776,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
           {activeTab === "grid" && (() => {
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
 
+
+
             // Which circle members to show as rows (based on selectedCircles filter)
             const activeCircles = selectedCircles.size > 0
               ? liveCircles.filter(c => selectedCircles.has(c.id))
@@ -2017,7 +2065,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   </div>
 
                   {/* Scrollable weeks */}
-                  <div style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}>
+                  <div id="grid-scroll-container" style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}>
                     <div style={{ minWidth: visibleWeeks.length * (COL_W + 8) }}>
 
                       {/* Header row */}
@@ -2533,7 +2581,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                   const friendCamps = allCampPool.filter(c => person.camps?.includes(c.id));
                   const parentLastInitial = person.name?.split(" ")[1]?.[0] || "";
-                  const INTEREST_MAP = { sports:"⚽ Sports", art:"🎨 Art", drama:"🎭 Drama", outdoors:"🌲 Outdoors", language:"🌍 Language", classic:"🏕️ Classic", stem:"🔬 STEM", music:"🎵 Music", academics:"📚 Academics" };
+                  const INTEREST_MAP = { sports:"⚽ Sports", art:"🎨 Art", drama:"🎭 Drama", outdoors:"🌲 Outdoors", language:"🌍 Language", classic:"🏕️ Classic", stem:"🔬 STEM", music:"🎵 Music", academics:"📚 Academics", gaming:"🎮 Gaming" };
 
                   return (
                     <div style={{ position: "fixed", inset: 0, zIndex: 50 }} onClick={() => setFriendProfilePopover(null)}>
@@ -2647,6 +2695,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               classic:  { label: "Classic",   emoji: "🏕️" },
               stem:     { label: "STEM",      emoji: "🔬" },
               music:    { label: "Music",     emoji: "🎵" },
+              gaming:   { label: "Gaming",    emoji: "🎮" },
             };
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             const allTypes = Object.keys(TYPE_CONFIG).filter(t => allCampPool.some(c => Array.isArray(c.campType) ? c.campType.includes(t) : c.campType === t));
@@ -2878,10 +2927,18 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             {/* Week × enrollments */}
                             {(() => {
                               const myKidBffIds = new Set(kids.flatMap(k => Array.from(getBffs(k.id))));
+                              // Deduplicate by userId+child so people in multiple circles only appear once
+                              const seenMemberKeys = new Set();
                               const allMembers = liveCircles.flatMap(c => c.members.map(m => ({
                                 ...m, circleColor: c.color, isBff: m.userId ? myKidBffIds.has(m.userId) : false,
                                 status: m.campStatus?.[camp.id] || 'enrolled',
-                              }))).filter(m => m.camps.includes(camp.id));
+                              }))).filter(m => {
+                                if (!m.camps.includes(camp.id)) return false;
+                                const key = (m.userId || m.id) + '-' + (m.child || '');
+                                if (seenMemberKeys.has(key)) return false;
+                                seenMemberKeys.add(key);
+                                return true;
+                              });
                               const myKidMembers = kids.map(k => {
                                 const s = campStatus[camp.id]?.[k.id];
                                 const status = s ? (typeof s === "string" ? s : s?.status) : null;
@@ -2940,7 +2997,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       const ef = editForm || {};
                                       const upd = (k, v) => setEditForm(prev => ({ ...prev, [k]: v }));
                                       const GRADES = ["Pre-K","K","1st","2nd","3rd","4th","5th","6th","7th","8th","9th","10th","11th","12th"];
-                                      const TYPES = [{ value:"sports",label:"⚽ Sports"},{ value:"art",label:"🎨 Art"},{ value:"drama",label:"🎭 Drama"},{ value:"outdoors",label:"🌲 Outdoors"},{ value:"language",label:"🌍 Language"},{ value:"classic",label:"🏕️ Classic"},{ value:"stem",label:"🔬 STEM"},{ value:"music",label:"🎵 Music"},{ value:"academics",label:"📚 Academics"}];
+                                      const TYPES = [{ value:"sports",label:"⚽ Sports"},{ value:"art",label:"🎨 Art"},{ value:"drama",label:"🎭 Drama"},{ value:"outdoors",label:"🌲 Outdoors"},{ value:"language",label:"🌍 Language"},{ value:"classic",label:"🏕️ Classic"},{ value:"stem",label:"🔬 STEM"},{ value:"music",label:"🎵 Music"},{ value:"academics",label:"📚 Academics"},{ value:"gaming",label:"🎮 Gaming"}];
                                       const curTypes = Array.isArray(ef.campType) ? ef.campType : (ef.campType ? [ef.campType] : []);
                                       return (
                                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3059,41 +3116,80 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     </div>
                                   </div>
                                 ) : (
-                                  <button
-                                    onClick={() => {
-                                      setEditCampId(camp.id);
-                                      setEditForm({
-                                        name: camp.name || "",
-                                        dateStart: camp.dateStart || "",
-                                        dateEnd: camp.dateEnd || "",
-                                        timeStart: camp.hours ? camp.hours.split(" - ")[0] : "",
-                                        timeEnd: camp.hours ? camp.hours.split(" - ")[1] : "",
-                                        beforeCareStart: camp.beforeCare ? camp.beforeCare.split(" - ")[0] : "",
-                                        beforeCareEnd: camp.beforeCare ? camp.beforeCare.split(" - ")[1] : "",
-                                        beforeCareCost: camp.beforeCareCost || "",
-                                        afterCareStart: camp.afterCare ? camp.afterCare.split(" - ")[0] : "",
-                                        afterCareEnd: camp.afterCare ? camp.afterCare.split(" - ")[1] : "",
-                                        afterCareCost: camp.afterCareCost || "",
-                                        days: camp.days || [],
-                                        campType: Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []),
-                                        ageOrGrade: camp.gradeMin || camp.gradeMax ? "grade" : "age",
-                                        ageMin: camp.ageMin || "",
-                                        ageMax: camp.ageMax || "",
-                                        gradeMin: camp.gradeMin || "",
-                                        gradeMax: camp.gradeMax || "",
-                                        location: camp.location || "",
-                                        address: camp.address || "",
-                                        url: camp.url || "",
-                                        cost: camp.cost || "",
-                                        discountCode: camp.discountCode || "",
-                                        notes: camp.notes || "",
-                                      });
-                                    }}
-                                    style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "6px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
-                                  >
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                    Edit camp
-                                  </button>
+                                  <div style={{ display: "flex", gap: 6 }}>
+                                    <button
+                                      onClick={() => {
+                                        setEditCampId(camp.id);
+                                        setEditForm({
+                                          name: camp.name || "",
+                                          dateStart: camp.dateStart || "",
+                                          dateEnd: camp.dateEnd || "",
+                                          timeStart: camp.hours ? camp.hours.split(" - ")[0] : "",
+                                          timeEnd: camp.hours ? camp.hours.split(" - ")[1] : "",
+                                          beforeCareStart: camp.beforeCare ? camp.beforeCare.split(" - ")[0] : "",
+                                          beforeCareEnd: camp.beforeCare ? camp.beforeCare.split(" - ")[1] : "",
+                                          beforeCareCost: camp.beforeCareCost || "",
+                                          afterCareStart: camp.afterCare ? camp.afterCare.split(" - ")[0] : "",
+                                          afterCareEnd: camp.afterCare ? camp.afterCare.split(" - ")[1] : "",
+                                          afterCareCost: camp.afterCareCost || "",
+                                          days: camp.days || [],
+                                          campType: Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []),
+                                          ageOrGrade: camp.gradeMin || camp.gradeMax ? "grade" : "age",
+                                          ageMin: camp.ageMin || "",
+                                          ageMax: camp.ageMax || "",
+                                          gradeMin: camp.gradeMin || "",
+                                          gradeMax: camp.gradeMax || "",
+                                          location: camp.location || "",
+                                          address: camp.address || "",
+                                          url: camp.url || "",
+                                          cost: camp.cost || "",
+                                          discountCode: camp.discountCode || "",
+                                          notes: camp.notes || "",
+                                        });
+                                      }}
+                                      style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "6px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                      Edit camp
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setManualForm({
+                                          name: camp.name + " (copy)",
+                                          dateStart: camp.dateStart || "",
+                                          dateEnd: camp.dateEnd || "",
+                                          timeStart: camp.hours ? camp.hours.split(" - ")[0] : "",
+                                          timeEnd: camp.hours ? camp.hours.split(" - ")[1] : "",
+                                          beforeCareStart: camp.beforeCare ? camp.beforeCare.split(" - ")[0] : "",
+                                          beforeCareEnd: camp.beforeCare ? camp.beforeCare.split(" - ")[1] : "",
+                                          beforeCareCost: camp.beforeCareCost ? String(camp.beforeCareCost) : "",
+                                          afterCareStart: camp.afterCare ? camp.afterCare.split(" - ")[0] : "",
+                                          afterCareEnd: camp.afterCare ? camp.afterCare.split(" - ")[1] : "",
+                                          afterCareCost: camp.afterCareCost ? String(camp.afterCareCost) : "",
+                                          days: camp.days || [],
+                                          campType: Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []),
+                                          ageOrGrade: camp.gradeMin || camp.gradeMax ? "grade" : "age",
+                                          ageMin: camp.ageMin ? String(camp.ageMin) : "",
+                                          ageMax: camp.ageMax ? String(camp.ageMax) : "",
+                                          gradeMin: camp.gradeMin || "",
+                                          gradeMax: camp.gradeMax || "",
+                                          location: camp.location || "",
+                                          address: camp.address || "",
+                                          url: camp.url || "",
+                                          cost: camp.cost ? String(camp.cost) : "",
+                                          discountCode: "",
+                                          notes: "",
+                                        });
+                                        setActiveTab("import");
+                                        setExpandedCampId(null);
+                                      }}
+                                      style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "6px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+                                      title="Duplicate this camp to create a similar one"
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                      Duplicate
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             )}
@@ -3888,6 +3984,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               { value: "stem",     label: "STEM",      emoji: "🔬" },
               { value: "music",    label: "Music",     emoji: "🎵" },
               { value: "academics", label: "Academics", emoji: "📚" },
+              { value: "gaming",    label: "Gaming",    emoji: "🎮" },
             ];
             const AGES = ["4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"];
             const kid = kids.find(k => k.id === profileKidId);
@@ -4790,6 +4887,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               { value: "classic",  label: "🏕️ Classic" },
                               { value: "stem",     label: "🔬 STEM" },
                               { value: "music",    label: "🎵 Music" },
+                              { value: "gaming",   label: "🎮 Gaming" },
                             ].map(t => (
                               <button key={t.value}
                                 type="button"
