@@ -100,7 +100,7 @@ export const getKids = async (userId) => {
       age: f.Age || '',
       interests: (f.Interests || []).map(i => i.toLowerCase()),
       zipcode: f.Zipcode || '',
-      visible: f.Visible || false,
+      visible: f.Visible !== undefined ? f.Visible : true,
       bio: f.Bio || '',
       bffs: f.BFFs ? f.BFFs.split(',').filter(Boolean) : [],
       camps: [],
@@ -113,6 +113,7 @@ export const saveKid = async (userId, name, initials) => {
     Name: name,
     Initials: initials,
     UserId: userId,
+    Visible: true,
   });
   return {
     id: record.id,
@@ -121,7 +122,7 @@ export const saveKid = async (userId, name, initials) => {
     age: '',
     interests: [],
     zipcode: '',
-    visible: false,
+    visible: true,
     bio: '',
     bffs: [],
     camps: [],

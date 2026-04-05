@@ -249,7 +249,7 @@ function Camplify({ userId, userName, userEmail }) {
           age: k.age ? String(k.age) : "",
           interests: new Set(k.interests || []),
           zipcode: k.zipcode || "",
-          visible: k.visible || false,
+          visible: k.visible !== undefined ? k.visible : true,
           bio: k.bio || "",
           bffs: new Set(k.bffs || []),
         };
