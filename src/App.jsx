@@ -184,6 +184,7 @@ export default function App() {
 }
 
 function Camplify({ userId, userName, userEmail }) {
+  const { signOut } = useClerk();
   const [activeTab, setActiveTab] = useState("grid");
   const [airtableCamps, setAirtableCamps] = useState([]);
   const [airtableKids, setAirtableKids] = useState([]);
@@ -1701,7 +1702,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             </nav>
             {/* User menu */}
             {(() => {
-              const { signOut } = useClerk();
               return (
                 <div style={{ position: "relative", marginLeft: 12 }}>
                   <button
@@ -1975,7 +1975,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             {/* Camp cell */}
                             <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
                               onClick={e => {
-                                if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY });
+                                if (camp) { setFocusedCampId(camp.id); setExpandedCampId(camp.id); setCampTypeFilter(new Set()); setActiveTab("camps"); }
                                 else if (isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY, editBreak: true, breakLabel });
                                 else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
                               }}>
@@ -2372,7 +2372,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         })()}
 
                         <button
-                          onClick={() => { setFocusedCampId(gridPopover.camp.id); setExpandedCampId(gridPopover.camp.id); setGridPopover(null); setActiveTab("camps"); }}
+                          onClick={() => { setFocusedCampId(gridPopover.camp.id); setExpandedCampId(gridPopover.camp.id); setGridPopover(null); setCampTypeFilter(new Set()); setActiveTab("camps"); }}
                           style={{
                             marginTop: 14, width: "100%", background: "#3D6B1F", color: "white",
                             border: "none", borderRadius: 8, padding: "9px 0",
@@ -2788,7 +2788,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         ref={el => { if (isFocused && el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); setTimeout(() => setFocusedCampId(null), 2000); } }}
                         style={{
                           background: "white",
-                          border: isFocused ? `2px solid ${camp.color}` : "1px solid #E5E7EB",
+                          borderTop: isFocused ? `2px solid ${camp.color}` : "1px solid #E5E7EB",
+                          borderRight: isFocused ? `2px solid ${camp.color}` : "1px solid #E5E7EB",
+                          borderBottom: isFocused ? `2px solid ${camp.color}` : "1px solid #E5E7EB",
                           borderLeft: `4px solid ${camp.color}`,
                           borderRadius: "var(--radius-lg)",
                           boxShadow: isFocused ? `0 0 0 3px ${camp.color}22, var(--shadow)` : "var(--shadow-sm)",
@@ -2953,6 +2955,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 status: m.campStatus?.[camp.id] || 'enrolled',
                               }))).filter(m => {
                                 if (!m.camps.includes(camp.id)) return false;
+                                // Don't show the current user's own kids as circle members (they show as myKidMembers)
+                                if (m.userId === userId) return false;
                                 const key = (m.userId || m.id) + '-' + (m.child || '');
                                 if (seenMemberKeys.has(key)) return false;
                                 seenMemberKeys.add(key);
@@ -2961,7 +2965,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               const myKidMembers = kids.map(k => {
                                 const s = campStatus[camp.id]?.[k.id];
                                 const status = s ? (typeof s === "string" ? s : s?.status) : null;
-                                const weeks = s?.weeks || [];
+                                // s can be a string (legacy) or object with .weeks
+                                const weeks = (s && typeof s === "object" && s.weeks?.length > 0) ? s.weeks : null;
                                 if (!status) return null;
                                 return { id: `kid-${k.id}`, name: k.name, child: k.name, initials: k.initials, isMyKid: true, status, weeks };
                               }).filter(Boolean);
@@ -2974,7 +2979,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     {campWeeks.map((w, wi) => {
                                       // Filter my kids to only those enrolled this week
                                       const kidsThisWeek = myKidMembers.filter(m =>
-                                        !m.weeks || m.weeks.length === 0 || m.weeks.includes(w.num)
+                                        m.weeks === null || m.weeks.includes(w.num)
                                       );
                                       const allPeopleThisWeek = [...kidsThisWeek, ...allMembers]
                                         .sort((a, b) => {
@@ -3210,6 +3215,32 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     </button>
                                   </div>
                                 )}
+                                {/* Share section */}
+                                {(() => {
+                                  const myKidsHereStatus = kids.map(k => {
+                                    const s = campStatus[camp.id]?.[k.id];
+                                    const status = s ? (typeof s === "string" ? s : s?.status) : null;
+                                    return status ? { name: k.name, status } : null;
+                                  }).filter(Boolean);
+                                  const statusLabel = (s) => s === "enrolled" ? "enrolled in" : s === "thinking" ? "interested in" : "waitlisted for";
+                                  const kidParts = myKidsHereStatus.map(k => `${k.name} is ${statusLabel(k.status)}`).join(" and ");
+                                  const msgBody = kidParts
+                                    ? `${kidParts} ${camp.name}${camp.dates ? ` — ${camp.dates}` : ""}${camp.location ? ` at ${camp.location}` : ""}!${camp.url ? `
+${camp.url}` : ""}`
+                                    : `Check out ${camp.name}${camp.dates ? ` — ${camp.dates}` : ""}${camp.location ? ` at ${camp.location}` : ""}!${camp.url ? `
+${camp.url}` : ""}`;
+                                  const shareText = encodeURIComponent(msgBody);
+                                  return (
+                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F3F4F6" }}>
+                                      <div className="invite-or" style={{ marginBottom: 6 }}>Share this camp</div>
+                                      <div className="invite-share-row">
+                                        <a className="invite-share-btn" href={`sms:?body=${shareText}`}>Text</a>
+                                        <a className="invite-share-btn" href={`https://wa.me/?text=${shareText}`} target="_blank" rel="noreferrer">WhatsApp</a>
+                                        <a className="invite-share-btn" href={`mailto:?subject=${encodeURIComponent(camp.name)}&body=${shareText}`}>Email</a>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             )}
 
@@ -3292,6 +3323,32 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                                           Remove from camp
                                         </button>
+                                        {/* Share divider */}
+                                        <div style={{ borderTop: "1px solid #F3F4F6", padding: "6px 14px 4px", fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px" }}>Share</div>
+                                        {(() => {
+                                          const shareText = encodeURIComponent(`${kid.name} is doing ${camp.name}${camp.dates ? ` — ${camp.dates}` : ""}${camp.location ? ` at ${camp.location}` : ""}!${camp.url ? " " + camp.url : ""}`);
+                                          return (
+                                            <div style={{ display: "flex", gap: 0, borderTop: "none" }}>
+                                              {[
+                                                { label: "💬 Text", href: `sms:?body=${shareText}` },
+                                                { label: "WhatsApp", href: `https://wa.me/?text=${shareText}`, target: "_blank" },
+                                                { label: "✉️ Email", href: `mailto:?subject=${encodeURIComponent(camp.name)}&body=${shareText}` },
+                                              ].map(({ label, href, target }) => (
+                                                <a key={label} href={href} target={target} rel="noreferrer"
+                                                  onClick={() => setCampStatusPicker(null)}
+                                                  style={{
+                                                    flex: 1, textAlign: "center", padding: "8px 4px",
+                                                    fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600,
+                                                    color: "#374151", textDecoration: "none",
+                                                    borderRight: label !== "✉️ Email" ? "1px solid #F3F4F6" : "none",
+                                                  }}
+                                                  onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"}
+                                                  onMouseLeave={e => e.currentTarget.style.background = "none"}
+                                                >{label}</a>
+                                              ))}
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                     )}
                                   </div>
@@ -3774,38 +3831,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       </div>
                                     ) : null}
                                   </div>
-                                  <div style={{ position: "relative", flexShrink: 0 }}>
-                                    <button
-                                      className="share-btn"
-                                      onClick={() => setShareCamp(sharecamp === camp.id ? null : camp.id)}
-                                      title="Share this camp"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                                      </svg>
-                                      Share
-                                    </button>
-                                    {sharecamp === camp.id && (() => {
-                                      const links = getShareLinks(camp);
-                                      return (
-                                        <div className="share-picker">
-                                          <a className="share-option" href={links.sms}>
-                                            <span className="share-icon">💬</span> Text Message
-                                          </a>
-                                          <a className="share-option" href={links.whatsapp} target="_blank" rel="noreferrer">
-                                            <span className="share-icon">📱</span> WhatsApp
-                                          </a>
-                                          <a className="share-option" href={links.email}>
-                                            <span className="share-icon">✉️</span> Email
-                                          </a>
-                                          <button className="share-option" onClick={() => { handleNativeShare(camp); setShareCamp(null); }}>
-                                            <span className="share-icon">📋</span> {shareCopied ? "Copied!" : "Copy Link"}
-                                          </button>
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
+
                                 </div>
                                   </div>
                                   <div className="camp-people-col">
@@ -5317,6 +5343,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 </span>
                 <span className="bottom-sheet-option-label" style={{ color: "#c0392b" }}>Remove from camp</span>
               </button>
+
               <button className="bottom-sheet-cancel" onClick={closeStatusPicker}>Cancel</button>
             </div>
           </div>
@@ -5499,6 +5526,31 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   </button>
                   <button className="btn-ghost" onClick={() => setEnrollModal(null)}>Cancel</button>
                 </div>
+
+                {/* Share buttons */}
+                {(() => {
+                  const shareText = encodeURIComponent(`${kid.name} is doing ${camp.name}${camp.dates ? ` — ${camp.dates}` : ""}${camp.location ? ` at ${camp.location}` : ""}!${camp.url ? " " + camp.url : ""}`);
+                  return (
+                    <div style={{ borderTop: "1px solid #F3F4F6", padding: "12px 0 0", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px" }}>Share this camp</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <a href={`sms:?body=${shareText}`}
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 0", borderRadius: 8, border: "1.5px solid #E5E7EB", background: "white", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", textDecoration: "none", cursor: "pointer" }}>
+                          💬 Text
+                        </a>
+                        <a href={`https://wa.me/?text=${shareText}`} target="_blank" rel="noreferrer"
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 0", borderRadius: 8, border: "1.5px solid #E5E7EB", background: "white", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", textDecoration: "none", cursor: "pointer" }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                          WhatsApp
+                        </a>
+                        <a href={`mailto:?subject=${encodeURIComponent(camp.name)}&body=${shareText}`}
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 0", borderRadius: 8, border: "1.5px solid #E5E7EB", background: "white", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", textDecoration: "none", cursor: "pointer" }}>
+                          ✉️ Email
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
