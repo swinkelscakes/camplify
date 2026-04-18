@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
@@ -162,7 +162,7 @@ export default function App() {
 
   if (!isLoaded) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB" }}>
-      <div style={{ fontSize: 14, color: "#9CA3AF", fontFamily: "Inter, sans-serif" }}>Loading...</div>
+      <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px" }}>Camplify</div>
     </div>
   );
 
@@ -538,6 +538,12 @@ function Camplify({ userId, userName, userEmail }) {
   const [importDone, setImportDone] = useState(false);
   const [dynamicCamps, setDynamicCamps] = useState([]);
   const [dynamicCampStatus, setDynamicCampStatus] = useState({});
+
+  // Ref for horizontally scrolling the week grid. On first render with
+  // camp data loaded, we scroll to the week before the kids' next enrolled
+  // camp so the user lands near "now" instead of at the far left.
+  const gridScrollRef = useRef(null);
+  const didInitialScrollRef = useRef(false);
 
   // Compute week columns dynamically from all camps
   const computedWeeks = getWeeksFromCamps([...camps, ...airtableCamps, ...dynamicCamps]);
@@ -1876,7 +1882,66 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   </div>
 
                   {/* Scrollable weeks */}
-                  <div style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}>
+                  <div
+                    ref={el => {
+                      gridScrollRef.current = el;
+                      if (!el || didInitialScrollRef.current) return;
+                      // Need camps + enrollments loaded before we can find "next camp"
+                      if (!visibleWeeks || visibleWeeks.length === 0) return;
+                      if (kids.length === 0) return;
+
+                      // Find the earliest enrolled camp across all kids that starts on/after today
+                      const todayIso = (() => {
+                        const d = new Date();
+                        const y = d.getFullYear();
+                        const m = String(d.getMonth() + 1).padStart(2, "0");
+                        const day = String(d.getDate()).padStart(2, "0");
+                        return `${y}-${m}-${day}`;
+                      })();
+                      let nextCampStart = null;
+                      kids.forEach(k => {
+                        allCampPool.forEach(camp => {
+                          const s = campStatus[camp.id]?.[k.id];
+                          if (!s) return;
+                          const statusVal = typeof s === "string" ? s : s?.status;
+                          if (statusVal !== "enrolled") return;
+                          const end = camp.dateEnd || camp.dateStart;
+                          if (!camp.dateStart || !end) return;
+                          if (end < todayIso) return; // camp already ended
+                          if (!nextCampStart || camp.dateStart < nextCampStart) {
+                            nextCampStart = camp.dateStart;
+                          }
+                        });
+                      });
+
+                      if (!nextCampStart) return; // no upcoming enrolled camps; leave at default
+
+                      // Compute the Monday of that camp, then step back one week
+                      const campMonday = (() => {
+                        const d = new Date(nextCampStart + "T12:00:00");
+                        const dow = d.getDay();
+                        d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+                        d.setDate(d.getDate() - 7); // week BEFORE
+                        const y = d.getFullYear();
+                        const m = String(d.getMonth() + 1).padStart(2, "0");
+                        const day = String(d.getDate()).padStart(2, "0");
+                        return `${y}-${m}-${day}`;
+                      })();
+
+                      const targetIdx = visibleWeeks.findIndex(w => w.num === campMonday);
+                      if (targetIdx <= 0) {
+                        // Target is current week or earlier — no need to scroll
+                        didInitialScrollRef.current = true;
+                        return;
+                      }
+
+                      // Scroll so the target week is the leftmost visible column.
+                      // COL_W = 148 + 8px margin = 156 per column.
+                      el.scrollLeft = targetIdx * (COL_W + 8);
+                      didInitialScrollRef.current = true;
+                    }}
+                    style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}
+                  >
                     <div style={{ minWidth: visibleWeeks.length * (COL_W + 8) }}>
 
                       {/* Header row */}
