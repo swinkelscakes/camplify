@@ -160,7 +160,22 @@ const AvatarStack = ({ members }) => {
 export default function App() {
   const { isSignedIn, isLoaded, user } = useUser();
 
-  if (!isLoaded) return (
+  // After Clerk reports `isLoaded`, it can still take a moment for a restored
+  // session to propagate. Without this grace period, a page refresh briefly
+  // flashes the welcome screen before the user is recognized as signed in.
+  const [authSettled, setAuthSettled] = useState(false);
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (isSignedIn) {
+      setAuthSettled(true);
+      return;
+    }
+    // Not signed in yet — wait briefly in case a session is still being restored
+    const t = setTimeout(() => setAuthSettled(true), 400);
+    return () => clearTimeout(t);
+  }, [isLoaded, isSignedIn]);
+
+  if (!isLoaded || (!isSignedIn && !authSettled)) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB" }}>
       <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px" }}>Camplify</div>
     </div>
@@ -1811,6 +1826,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               );
             }
 
+            // While initial Airtable fetch is in flight, show a minimal branded
+            // placeholder instead of the "Welcome / Add a Kid" empty state.
+            if (loading) {
+              return (
+                <div style={{ textAlign: "center", padding: "80px 20px" }}>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px" }}>Camplify</div>
+                </div>
+              );
+            }
+
             // Empty state for brand new users
             if (kids.length === 0 && friendRows.length === 0) {
               return (
@@ -2781,7 +2806,15 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       const kidsThisWeek = myKidMembers.filter(m =>
                                         !m.weeks || m.weeks.length === 0 || m.weeks.includes(w.num)
                                       );
-                                      const allPeopleThisWeek = [...kidsThisWeek, ...allMembers]
+                                      // Filter circle members to only those enrolled this week.
+                                      // If a member has no campWeeks recorded for this camp, fall
+                                      // back to showing them in every week (single-week camps or
+                                      // legacy data without per-week info).
+                                      const membersThisWeek = allMembers.filter(m => {
+                                        const memberWeeks = m.campWeeks?.[camp.id];
+                                        return !memberWeeks || memberWeeks.length === 0 || memberWeeks.includes(w.num);
+                                      });
+                                      const allPeopleThisWeek = [...kidsThisWeek, ...membersThisWeek]
                                         .sort((a, b) => (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3));
                                       return (
                                         <div key={w.num} style={{ flex: "0 0 auto", minWidth: 100, borderLeft: wi > 0 ? "1px solid #F3F4F6" : "none", paddingLeft: wi > 0 ? 14 : 0, paddingRight: 14 }}>
@@ -3746,7 +3779,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const kidEnrolledCamps = allCampPool.filter(c => campStatus[c.id]?.[profileKidId]);
 
             if (loading) return (
-              <div style={{ textAlign: "center", padding: "60px 0", color: "#9CA3AF", fontSize: 14 }}>Loading...</div>
+              <div style={{ textAlign: "center", padding: "80px 20px" }}>
+                <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px" }}>Camplify</div>
+              </div>
             );
 
             if (kids.length === 0 && !addingKid) return (
