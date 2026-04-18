@@ -2438,7 +2438,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                   const friendCamps = allCampPool.filter(c => person.camps?.includes(c.id));
                   const parentLastInitial = person.name?.split(" ")[1]?.[0] || "";
-                  const INTEREST_MAP = { sports:"⚽ Sports", art:"🎨 Art", drama:"🎭 Drama", outdoors:"🌲 Outdoors", language:"🌍 Language", classic:"🏕️ Classic", stem:"🔬 STEM", music:"🎵 Music", academics:"📚 Academics" };
+                  const INTEREST_MAP = { sports:"⚽ Sports", art:"🎨 Art", drama:"🎭 Drama", dance:"🩰 Dance", outdoors:"🌲 Outdoors", language:"🌍 Language", classic:"🏕️ Classic", stem:"🔬 STEM", music:"🎵 Music", academics:"📚 Academics" };
 
                   return (
                     <div style={{ position: "fixed", inset: 0, zIndex: 50 }} onClick={() => setFriendProfilePopover(null)}>
@@ -2547,6 +2547,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               sports:   { label: "Sports",   emoji: "⚽" },
               art:      { label: "Art",       emoji: "🎨" },
               drama:    { label: "Drama",     emoji: "🎭" },
+              dance:    { label: "Dance",     emoji: "🩰" },
               outdoors: { label: "Outdoors",  emoji: "🌲" },
               language: { label: "Language",  emoji: "🌍" },
               classic:  { label: "Classic",   emoji: "🏕️" },
@@ -2850,7 +2851,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       const ef = editForm || {};
                                       const upd = (k, v) => setEditForm(prev => ({ ...prev, [k]: v }));
                                       const GRADES = ["Pre-K","K","1st","2nd","3rd","4th","5th","6th","7th","8th","9th","10th","11th","12th"];
-                                      const TYPES = [{ value:"sports",label:"⚽ Sports"},{ value:"art",label:"🎨 Art"},{ value:"drama",label:"🎭 Drama"},{ value:"outdoors",label:"🌲 Outdoors"},{ value:"language",label:"🌍 Language"},{ value:"classic",label:"🏕️ Classic"},{ value:"stem",label:"🔬 STEM"},{ value:"music",label:"🎵 Music"},{ value:"academics",label:"📚 Academics"}];
+                                      const TYPES = [{ value:"sports",label:"⚽ Sports"},{ value:"art",label:"🎨 Art"},{ value:"drama",label:"🎭 Drama"},{ value:"dance",label:"🩰 Dance"},{ value:"outdoors",label:"🌲 Outdoors"},{ value:"language",label:"🌍 Language"},{ value:"classic",label:"🏕️ Classic"},{ value:"stem",label:"🔬 STEM"},{ value:"music",label:"🎵 Music"},{ value:"academics",label:"📚 Academics"}];
                                       const curTypes = Array.isArray(ef.campType) ? ef.campType : (ef.campType ? [ef.campType] : []);
                                       return (
                                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3467,7 +3468,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                           background: "#F3F4F6", border: "1px solid #E5E7EB",
                                           borderRadius: 5, padding: "1px 6px", whiteSpace: "nowrap",
                                         }}>
-                                          {(() => { const EMOJIS = { sports:"⚽", art:"🎨", drama:"🎭", outdoors:"🌲", language:"🌍", classic:"🏕️", stem:"🔬", music:"🎵" }; const types = Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []); return types.filter(Boolean).map(t => (EMOJIS[t] || "") + " " + t.charAt(0).toUpperCase() + t.slice(1)).join(", "); })()}
+                                          {(() => { const EMOJIS = { sports:"⚽", art:"🎨", drama:"🎭", dance:"🩰", outdoors:"🌲", language:"🌍", classic:"🏕️", stem:"🔬", music:"🎵" }; const types = Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []); return types.filter(Boolean).map(t => (EMOJIS[t] || "") + " " + t.charAt(0).toUpperCase() + t.slice(1)).join(", "); })()}
                                         </span>
                                       )}
                                     </div>
@@ -3757,6 +3758,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               { value: "sports",   label: "Sports",   emoji: "⚽" },
               { value: "art",      label: "Art",       emoji: "🎨" },
               { value: "drama",    label: "Drama",     emoji: "🎭" },
+              { value: "dance",    label: "Dance",     emoji: "🩰" },
               { value: "outdoors", label: "Outdoors",  emoji: "🌲" },
               { value: "language", label: "Language",  emoji: "🌍" },
               { value: "classic",  label: "Classic",   emoji: "🏕️" },
@@ -4647,6 +4649,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               { value: "sports",   label: "⚽ Sports" },
                               { value: "art",      label: "🎨 Art" },
                               { value: "drama",    label: "🎭 Drama" },
+                              { value: "dance",    label: "🩰 Dance" },
                               { value: "outdoors", label: "🌲 Outdoors" },
                               { value: "language", label: "🌍 Language" },
                               { value: "classic",  label: "🏕️ Classic" },
