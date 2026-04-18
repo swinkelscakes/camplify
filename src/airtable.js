@@ -100,9 +100,8 @@ export const getKids = async (userId) => {
       age: f.Age || '',
       interests: (f.Interests || []).map(i => i.toLowerCase()),
       zipcode: f.Zipcode || '',
-      visible: f.Visible !== undefined ? f.Visible : true,
+      visible: f.Visible || false,
       bio: f.Bio || '',
-      bffs: f.BFFs ? f.BFFs.split(',').filter(Boolean) : [],
       camps: [],
     };
   });
@@ -113,7 +112,6 @@ export const saveKid = async (userId, name, initials) => {
     Name: name,
     Initials: initials,
     UserId: userId,
-    Visible: true,
   });
   return {
     id: record.id,
@@ -122,9 +120,8 @@ export const saveKid = async (userId, name, initials) => {
     age: '',
     interests: [],
     zipcode: '',
-    visible: true,
+    visible: false,
     bio: '',
-    bffs: [],
     camps: [],
   };
 };
@@ -138,7 +135,6 @@ export const updateKid = async (kidId, fields) => {
   if (fields.zipcode !== undefined) airtableFields.Zipcode = fields.zipcode;
   if (fields.visible !== undefined) airtableFields.Visible = fields.visible;
   if (fields.bio !== undefined) airtableFields.Bio = fields.bio;
-  if (fields.bffs !== undefined) airtableFields.BFFs = fields.bffs.join(',');
   await base('Kids').update(kidId, airtableFields);
 };
 
@@ -244,26 +240,28 @@ export const deleteBreak = async (breakId) => {
 export const updateCamp = async (campId, fields) => {
   const airtableFields = {};
   if (fields.name !== undefined) airtableFields.Name = fields.name;
-  if (fields.dateStart !== undefined) airtableFields.DateStart = fields.dateStart || null;
-  if (fields.dateEnd !== undefined) airtableFields.DateEnd = fields.dateEnd || null;
+  if (fields.dateStart !== undefined) airtableFields.DateStart = fields.dateStart;
+  if (fields.dateEnd !== undefined) airtableFields.DateEnd = fields.dateEnd;
   if (fields.location !== undefined) airtableFields.Location = fields.location;
   if (fields.address !== undefined) airtableFields.Address = fields.address;
-  if (fields.timeStart !== undefined) airtableFields.TimeStart = fields.timeStart || null;
-  if (fields.timeEnd !== undefined) airtableFields.TimeEnd = fields.timeEnd || null;
-  if (fields.beforeCareStart !== undefined) airtableFields.BeforeCareStart = fields.beforeCareStart || null;
-  if (fields.beforeCareEnd !== undefined) airtableFields.BeforeCareEnd = fields.beforeCareEnd || null;
+  if (fields.timeStart !== undefined) airtableFields.TimeStart = fields.timeStart;
+  if (fields.timeEnd !== undefined) airtableFields.TimeEnd = fields.timeEnd;
+  if (fields.beforeCareStart !== undefined) airtableFields.BeforeCareStart = fields.beforeCareStart;
+  if (fields.beforeCareEnd !== undefined) airtableFields.BeforeCareEnd = fields.beforeCareEnd;
   if (fields.beforeCareCost !== undefined) airtableFields['BeforeCare Cost'] = fields.beforeCareCost ? Number(fields.beforeCareCost) : null;
-  if (fields.afterCareStart !== undefined) airtableFields.AfterCareStart = fields.afterCareStart || null;
-  if (fields.afterCareEnd !== undefined) airtableFields.AfterCareEnd = fields.afterCareEnd || null;
+  if (fields.afterCareStart !== undefined) airtableFields.AfterCareStart = fields.afterCareStart;
+  if (fields.afterCareEnd !== undefined) airtableFields.AfterCareEnd = fields.afterCareEnd;
   if (fields.afterCareCost !== undefined) airtableFields['AfterCare Cost'] = fields.afterCareCost ? Number(fields.afterCareCost) : null;
-  if (fields.campType !== undefined) airtableFields.Type = Array.isArray(fields.campType) ? fields.campType.filter(Boolean).map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t) : [];
-  if (fields.days !== undefined) airtableFields.Days = (fields.days || []).filter(Boolean);
+  if (fields.campType !== undefined) airtableFields.Type = Array.isArray(fields.campType) ? fields.campType.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t) : [];
+  if (fields.days !== undefined) airtableFields.Days = fields.days;
   if (fields.ageMin !== undefined) airtableFields.AgeMin = fields.ageMin ? Number(fields.ageMin) : null;
   if (fields.ageMax !== undefined) airtableFields.AgeMax = fields.ageMax ? Number(fields.ageMax) : null;
-  if (fields.gradeMin !== undefined) airtableFields.GradeMin = fields.gradeMin || null;
-  if (fields.gradeMax !== undefined) airtableFields.GradeMax = fields.gradeMax || null;
+  if (fields.gradeMin !== undefined) airtableFields.GradeMin = fields.gradeMin;
+  if (fields.gradeMax !== undefined) airtableFields.GradeMax = fields.gradeMax;
   if (fields.cost !== undefined) airtableFields.Cost = fields.cost ? Number(fields.cost) : null;
   if (fields.url !== undefined) airtableFields.URL = fields.url;
+  if (fields.notes !== undefined) airtableFields.Notes = fields.notes;
+  if (fields.discountCode !== undefined) airtableFields.DiscountCode = fields.discountCode;
   await base('Camps').update(campId, airtableFields);
 };
 
@@ -291,6 +289,8 @@ export const saveCamp = async (userId, fields) => {
   if (fields.gradeMax) airtableFields.GradeMax = fields.gradeMax;
   if (fields.cost) airtableFields.Cost = Number(fields.cost);
   if (fields.url) airtableFields.URL = fields.url;
+  if (fields.notes) airtableFields.Notes = fields.notes;
+  if (fields.discountCode) airtableFields.DiscountCode = fields.discountCode;
   const campType = Array.isArray(fields.campType) ? fields.campType : (fields.campType ? [fields.campType] : []);
   if (campType.length > 0) airtableFields.Type = campType.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t);
   const days = fields.days || [];
@@ -428,11 +428,6 @@ export const createCircle = async (userId, name, color) => {
   };
 };
 
-// Update a circle's name
-export const updateCircle = async (circleId, name) => {
-  await base('Circles').update(circleId, { Name: name });
-};
-
 // Join a circle by invite code
 export const joinCircleByCode = async (userId, parentName, childName, inviteCode) => {
   // Find circle with this code
@@ -539,54 +534,53 @@ export const deleteImportantDate = async (dateId) => {
   await base('ImportantDates').destroy(dateId);
 };
 
-// ── REVIEWS ──
-
-export const getReviews = async (campIds) => {
-  if (!campIds || campIds.length === 0) return [];
+// Load all reviews. Filtering by which reviews the user can see is done
+// client-side using the same shared-circle logic used for enrollments.
+export const getReviews = async () => {
   try {
-    let records;
-    try { records = await base('Reviews').select().all(); }
-    catch (tableErr) { return []; } // Table may not exist yet
-    return records
-      .filter(r => r.fields.Camp && campIds.includes(r.fields.Camp[0]))
-      .map(r => ({
+    const records = await base('Reviews').select().all();
+    return records.map(r => {
+      const f = r.fields;
+      return {
         id: r.id,
-        campId: r.fields.Camp ? r.fields.Camp[0] : '',
-        userId: r.fields.UserId || '',
-        authorName: r.fields.AuthorName || '',
-        authorChild: r.fields.AuthorChild || '',
-        rating: r.fields.Rating || 0,
-        text: r.fields.Text || '',
-        date: r.fields.Date || '',
-      }));
+        campId: f.Camp ? f.Camp[0] : '',
+        userId: f.UserId || '',
+        authorName: f.AuthorName || '',
+        authorChild: f.AuthorChild || '',
+        rating: f.Rating || 0,
+        text: f.Text || '',
+        date: f.Date || '',
+        circleIds: f.CircleIds ? f.CircleIds.split(',').filter(Boolean) : [],
+      };
+    });
   } catch (e) {
     console.error('Error loading reviews:', e);
     return [];
   }
 };
 
-export const saveReview = async (campId, userId, authorName, authorChild, rating, text) => {
+// Save a new review
+export const saveReview = async (userId, campId, authorName, authorChild, rating, text, circleIds) => {
   const record = await base('Reviews').create({
     Camp: [campId],
     UserId: userId,
-    AuthorName: authorName,
-    AuthorChild: authorChild,
-    Rating: rating,
-    Text: text,
+    AuthorName: authorName || '',
+    AuthorChild: authorChild || '',
+    Rating: Number(rating) || 0,
+    Text: text || '',
     Date: new Date().toISOString().slice(0, 10),
+    CircleIds: Array.isArray(circleIds) && circleIds.length > 0 ? circleIds.join(',') : '',
   });
+  const f = record.fields;
   return {
     id: record.id,
     campId,
     userId,
-    authorName,
-    authorChild,
-    rating,
-    text,
-    date: record.fields.Date || new Date().toISOString().slice(0, 10),
+    authorName: f.AuthorName || '',
+    authorChild: f.AuthorChild || '',
+    rating: f.Rating || 0,
+    text: f.Text || '',
+    date: f.Date || '',
+    circleIds: f.CircleIds ? f.CircleIds.split(',').filter(Boolean) : [],
   };
-};
-
-export const deleteReview = async (reviewId) => {
-  await base('Reviews').destroy(reviewId);
 };

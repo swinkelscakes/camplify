@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -219,6 +219,23 @@ function Camplify({ userId, userName, userEmail }) {
       getCircles(userId).then(circlesData => {
         setAirtableCircles(circlesData);
       }).catch(err => console.warn('Circles failed to load:', err));
+
+      // Load reviews independently so a review-table misconfiguration
+      // (e.g. missing Reviews table in Airtable) doesn't break the rest
+      // of the app. Reviews render empty if the fetch fails.
+      getReviews().then(reviewsData => {
+        const byCamp = {};
+        reviewsData.forEach(r => {
+          if (!r.campId) return;
+          if (!byCamp[r.campId]) byCamp[r.campId] = [];
+          byCamp[r.campId].push(r);
+        });
+        // Sort each camp's reviews newest-first
+        Object.keys(byCamp).forEach(cid => {
+          byCamp[cid].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        });
+        setCampReviews(byCamp);
+      }).catch(err => console.warn('Reviews failed to load:', err));
       setAirtableKids(kidsData);
       setSelectedKids(new Set(kidsData.map(k => k.id)));
       setProfileKidId(kidsData[0]?.id || null);
@@ -3131,17 +3148,48 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                         <button
                                           disabled={!draft.rating || !draft.text.trim()}
-                                          onClick={() => {
+                                          onClick={async () => {
                                             if (!draft.rating || !draft.text.trim()) return;
-                                            const newReview = {
-                                              id: Date.now(), authorName: "You", authorChild: kids[0]?.name,
-                                              circleIds: liveCircles.map(c => c.id),
-                                              rating: draft.rating, text: draft.text.trim(),
+                                            const ratingAtSubmit = draft.rating;
+                                            const textAtSubmit = draft.text.trim();
+                                            const firstKid = kids[0];
+                                            const authorName = userName || "You";
+                                            const authorChild = firstKid?.name || "";
+                                            const circleIds = liveCircles.map(c => c.id);
+                                            // Optimistically add a temporary entry so the UI updates immediately
+                                            const tempId = `temp-${Date.now()}`;
+                                            const tempReview = {
+                                              id: tempId,
+                                              campId: camp.id,
+                                              userId,
+                                              authorName,
+                                              authorChild,
+                                              rating: ratingAtSubmit,
+                                              text: textAtSubmit,
                                               date: new Date().toISOString().slice(0, 10),
+                                              circleIds,
                                             };
-                                            setCampReviews(prev => ({ ...prev, [camp.id]: [newReview, ...(prev[camp.id] || [])] }));
+                                            setCampReviews(prev => ({ ...prev, [camp.id]: [tempReview, ...(prev[camp.id] || [])] }));
                                             setReviewDraft(prev => ({ ...prev, [camp.id]: { rating: 0, text: "" } }));
                                             setShowReviewForm(null);
+                                            try {
+                                              const saved = await saveReview(userId, camp.id, authorName, authorChild, ratingAtSubmit, textAtSubmit, circleIds);
+                                              // Replace the temp entry with the saved one
+                                              setCampReviews(prev => ({
+                                                ...prev,
+                                                [camp.id]: (prev[camp.id] || []).map(r => r.id === tempId ? saved : r),
+                                              }));
+                                            } catch (err) {
+                                              console.error('Failed to save review:', err);
+                                              // Roll back the optimistic entry and restore the draft so the user can retry
+                                              setCampReviews(prev => ({
+                                                ...prev,
+                                                [camp.id]: (prev[camp.id] || []).filter(r => r.id !== tempId),
+                                              }));
+                                              setReviewDraft(prev => ({ ...prev, [camp.id]: { rating: ratingAtSubmit, text: textAtSubmit } }));
+                                              setShowReviewForm(camp.id);
+                                              alert("Couldn't save your review. Please try again.");
+                                            }
                                           }}
                                           style={{
                                             background: "#3D6B1F", border: "none", borderRadius: 7,
