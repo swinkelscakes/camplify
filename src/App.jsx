@@ -840,6 +840,61 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
       const newId = await saveEnrollment(kidId, campId, status, days, beforeCare, afterCare, weeks).catch(console.error);
       if (newId) setEnrollmentIds(prev => ({ ...prev, [key]: newId }));
     }
+    // If this enrollment is "enrolled", remove this kid's interest in OTHER
+    // camps for the overlapping weeks. A kid can only physically be at one
+    // camp per week, so "thinking about" any conflicting camp is moot.
+    if (status === "enrolled") {
+      await pruneConflictingInterests(campId, kidId, weeks);
+    }
+  };
+
+  // Remove this kid's non-enrolled status from OTHER camps that run during
+  // any of the given weeks. If an interested camp runs only in those weeks,
+  // the status is removed entirely; otherwise its weeks array is trimmed.
+  const pruneConflictingInterests = async (enrolledCampId, kidId, enrolledWeeks) => {
+    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+    // The enrolling camp's actual weeks — used when `enrolledWeeks` is empty
+    // (which means "all weeks this camp runs").
+    const enrollingCamp = allCampPool.find(c => c.id === enrolledCampId);
+    const effectiveEnrolledWeeks = enrolledWeeks && enrolledWeeks.length > 0
+      ? enrolledWeeks
+      : (enrollingCamp?.weekRange || (enrollingCamp?.week ? [enrollingCamp.week] : []));
+    if (effectiveEnrolledWeeks.length === 0) return;
+    const enrolledSet = new Set(effectiveEnrolledWeeks);
+
+    // Snapshot the current status map so we don't re-read during async work
+    const currentStatus = campStatus;
+    const tasks = [];
+    Object.keys(currentStatus).forEach(otherCampId => {
+      if (otherCampId === enrolledCampId) return;
+      const entry = currentStatus[otherCampId]?.[kidId];
+      if (!entry) return;
+      const otherStatus = typeof entry === "string" ? entry : entry?.status;
+      if (!otherStatus || otherStatus === "enrolled") return; // leave other enrollments alone
+
+      const otherCamp = allCampPool.find(c => c.id === otherCampId);
+      if (!otherCamp) return;
+      const otherCampWeeks = otherCamp.weekRange || (otherCamp.week ? [otherCamp.week] : []);
+      const storedWeeks = (typeof entry === "object" && Array.isArray(entry.weeks)) ? entry.weeks : [];
+      // "Effective" weeks this interested status applies to
+      const effectiveWeeks = storedWeeks.length > 0 ? storedWeeks : otherCampWeeks;
+      const remaining = effectiveWeeks.filter(w => !enrolledSet.has(w));
+
+      if (remaining.length === 0) {
+        // All remaining weeks overlapped — drop the status entirely
+        tasks.push(removeStatus(otherCampId, kidId));
+      } else if (remaining.length !== effectiveWeeks.length) {
+        // Partial overlap — narrow the weeks on this interested status
+        tasks.push(setEnrollmentDetails(otherCampId, kidId, {
+          status: otherStatus,
+          days: typeof entry === "object" ? (entry.days || []) : [],
+          beforeCare: typeof entry === "object" ? !!entry.beforeCare : false,
+          afterCare: typeof entry === "object" ? !!entry.afterCare : false,
+          weeks: remaining,
+        }));
+      }
+    });
+    await Promise.all(tasks).catch(console.error);
   };
 
   const removeStatus = async (campId, kidId) => {
@@ -2103,11 +2158,18 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                                 // Calculate heights for stacked chips
                                 const OVERFLOW_H = 16;
+                                const ADD_BTN_H = 20;
                                 const overflowReserve = thinkingOverflow > 0 ? OVERFLOW_H + 4 : 0; // height + gap
+                                // The "+ add another interested camp" button only shows on your
+                                // kid's row when there's NO enrolled camp (enrolling locks the
+                                // week in, so adding more interests is moot). Only reserve
+                                // vertical space when we'll actually render the button.
+                                const showAddBtn = person.isMyKid && !enrolledCamp;
+                                const addBtnReserve = showAddBtn ? ADD_BTN_H + 4 : 0;
                                 const totalCamps = (enrolledCamp ? 1 : 0) + thinkingCamps.length;
                                 const totalGap = (totalCamps - 1) * 4;
                                 const CELL_H = 94;
-                                const availableH = CELL_H - overflowReserve;
+                                const availableH = CELL_H - overflowReserve - addBtnReserve;
                                 const enrolledH = enrolledCamp && thinkingCamps.length === 0 ? availableH : enrolledCamp ? Math.round(availableH * 0.55) : 0;
                                 const thinkingH = thinkingCamps.length > 0 ? Math.floor((availableH - enrolledH - totalGap) / thinkingCamps.length) : 0;
 
@@ -2149,20 +2211,22 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                         <div style={{ width: "100%", borderRadius: 12, background: "transparent", border: "1.5px dashed #E5E7EB" }} />
                                       )
                                     ) : (
-                                      <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4 }}>
-                                        {enrolledCamp && renderCampChip(enrolledCamp, true, enrolledH)}
-                                        {thinkingCamps.map(c => renderCampChip(c, false, thinkingH))}
-                                        {thinkingOverflow > 0 && (
-                                          <button
-                                            onClick={e => { e.stopPropagation(); person.isMyKid && setGridAddCell(prev => prev?.kidId === person.id && prev?.weekNum === w.num ? null : { kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY }); }}
-                                            style={{ width: "100%", height: OVERFLOW_H, borderRadius: 6, background: "#FEF3C7", border: "1px solid #FDE68A", color: "#713F12", fontFamily: "Inter, sans-serif", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.3px", cursor: person.isMyKid ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, flexShrink: 0, transition: "filter 0.12s" }}
-                                            onMouseEnter={e => { if (person.isMyKid) e.currentTarget.style.filter = "brightness(0.96)"; }}
-                                            onMouseLeave={e => e.currentTarget.style.filter = "none"}
-                                          >+{thinkingOverflow} more</button>
-                                        )}
-                                        {person.isMyKid && (
+                                      <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                                        <div style={{ width: "100%", height: showAddBtn ? `calc(100% - ${ADD_BTN_H + 4}px)` : "100%", display: "flex", flexDirection: "column", gap: 4 }}>
+                                          {enrolledCamp && renderCampChip(enrolledCamp, true, enrolledH)}
+                                          {thinkingCamps.map(c => renderCampChip(c, false, thinkingH))}
+                                          {thinkingOverflow > 0 && (
+                                            <button
+                                              onClick={e => { e.stopPropagation(); person.isMyKid && setGridAddCell(prev => prev?.kidId === person.id && prev?.weekNum === w.num ? null : { kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY }); }}
+                                              style={{ width: "100%", height: OVERFLOW_H, borderRadius: 6, background: "#FEF3C7", border: "1px solid #FDE68A", color: "#713F12", fontFamily: "Inter, sans-serif", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.3px", cursor: person.isMyKid ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, flexShrink: 0, transition: "filter 0.12s" }}
+                                              onMouseEnter={e => { if (person.isMyKid) e.currentTarget.style.filter = "brightness(0.96)"; }}
+                                              onMouseLeave={e => e.currentTarget.style.filter = "none"}
+                                            >+{thinkingOverflow} more</button>
+                                          )}
+                                        </div>
+                                        {showAddBtn && (
                                           <button onClick={e => { e.stopPropagation(); setGridAddCell(prev => prev?.kidId === person.id && prev?.weekNum === w.num ? null : { kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY }); }}
-                                            style={{ width: "100%", height: 20, borderRadius: 6, background: "transparent", border: "1px dashed #D1D5DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, transition: "all 0.12s" }}
+                                            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: ADD_BTN_H, borderRadius: 6, background: "transparent", border: "1px dashed #D1D5DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.12s" }}
                                             onMouseEnter={e => { e.currentTarget.style.borderColor = "#3D6B1F"; e.currentTarget.style.background = "#f6faf2"; }}
                                             onMouseLeave={e => { e.currentTarget.style.borderColor = "#D1D5DB"; e.currentTarget.style.background = "transparent"; }}>
                                             <span style={{ fontSize: 11, color: "#D1D5DB", fontWeight: 600, lineHeight: 1 }}>+</span>
