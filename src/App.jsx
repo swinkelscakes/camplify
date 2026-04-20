@@ -5046,7 +5046,24 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             <div className="circle-count">{circle.members.length} families</div>
                           </div>
                         </div>
-                        <span className={`circle-chevron ${expandedMember?.circleId === circle.id ? "open" : ""}`}>▾</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <button
+                            onClick={e => { e.stopPropagation(); setInviteCircleId(circle.id); setInviteSent(false); setExpandedMember({ circleId: circle.id, memberId: null }); }}
+                            style={{
+                              background: "#3D6B1F", border: "none", borderRadius: 8,
+                              padding: "6px 12px", fontFamily: "Inter, sans-serif",
+                              fontSize: 12.5, fontWeight: 700, color: "white", cursor: "pointer",
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              whiteSpace: "nowrap", transition: "filter 0.12s",
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.filter = "brightness(1.08)"}
+                            onMouseLeave={e => e.currentTarget.style.filter = "none"}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                            Invite
+                          </button>
+                          <span className={`circle-chevron ${expandedMember?.circleId === circle.id ? "open" : ""}`}>▾</span>
+                        </div>
                       </div>
 
                       {expandedMember?.circleId === circle.id && (
@@ -5089,7 +5106,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             );
                           })}
                           {/* Invite row */}
-                          {inviteCircleId === circle.id ? (
+                          {inviteCircleId === circle.id && (
                             <div className="invite-form">
                               <div className="invite-form-title">Invite to {circle.name}</div>
                               {circle.inviteCode && (() => {
@@ -5130,10 +5147,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               })()}
                               <button className="invite-cancel" onClick={() => { setInviteCircleId(null); }}>Done</button>
                             </div>
-                          ) : (
-                            <button className="invite-btn" onClick={e => { e.stopPropagation(); setInviteCircleId(circle.id); setInviteSent(false); }}>
-                              + Invite Friends
-                            </button>
                           )}
                         </div>
                       )}
