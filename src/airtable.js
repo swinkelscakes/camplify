@@ -534,6 +534,83 @@ export const deleteImportantDate = async (dateId) => {
   await base('ImportantDates').destroy(dateId);
 };
 
+// Fetch a single circle by invite code for public preview (no auth required).
+// Returns the same shape as getCircles() entries so the read-only grid can
+// reuse existing rendering logic. Returns null if the code doesn't match.
+export const getCirclePublic = async (inviteCode) => {
+  try {
+    const circles = await base('Circles').select({
+      filterByFormula: `{InviteCode} = '${inviteCode}'`
+    }).all();
+    if (circles.length === 0) return null;
+    const circle = circles[0];
+
+    // Load members, kids, enrollments, breaks for this circle only
+    const [allMembers, allKids, allEnrollments, allBreaks] = await Promise.all([
+      base('CircleMembers').select().all(),
+      base('Kids').select().all(),
+      base('Enrollments').select().all(),
+      base('Breaks').select().all(),
+    ]);
+
+    const circleMembers = allMembers.filter(m => (m.fields.Circle || []).includes(circle.id));
+
+    const members = circleMembers.map(m => {
+      const memberUserId = m.fields.UserId || '';
+      const childName = m.fields.ChildName || '';
+      const memberKids = allKids.filter(k => k.fields.UserId === memberUserId);
+      const exactMatch = memberKids.find(k => k.fields.Name === childName);
+      const firstNameMatches = memberKids.filter(k => k.fields.Name?.split(' ')[0] === childName?.split(' ')[0]);
+      const specificKid = exactMatch || (firstNameMatches.length === 1 ? firstNameMatches[0] : null);
+      const isVisible = specificKid ? specificKid.fields.Visible === true : false;
+      const visibleMemberKids = specificKid && isVisible ? [specificKid] : [];
+      const memberKidIds = new Set(visibleMemberKids.map(k => k.id));
+
+      const memberEnrollments = allEnrollments
+        .filter(e => e.fields.Kid && memberKidIds.has(e.fields.Kid[0]));
+      const memberCampIds = memberEnrollments
+        .map(e => e.fields.Camp ? e.fields.Camp[0] : null)
+        .filter(Boolean);
+      const memberCampWeeks = {};
+      const memberCampStatus = {};
+      memberEnrollments.forEach(e => {
+        const campId = e.fields.Camp ? e.fields.Camp[0] : null;
+        if (campId) {
+          memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').filter(Boolean) : [];
+          memberCampStatus[campId] = e.fields.Status || 'enrolled';
+        }
+      });
+      const memberBreaks = allBreaks
+        .filter(b => b.fields.Kid && memberKidIds.has(b.fields.Kid[0]))
+        .map(b => ({ weekIso: b.fields.WeekIso || '', label: b.fields.Label || 'Break' }));
+
+      return {
+        id: m.id,
+        userId: memberUserId,
+        name: m.fields.ParentName || '',
+        child: childName,
+        camps: memberCampIds,
+        campWeeks: memberCampWeeks,
+        campStatus: memberCampStatus,
+        breaks: memberBreaks,
+        visible: isVisible,
+      };
+    });
+
+    return {
+      id: circle.id,
+      name: circle.fields.Name || '',
+      color: circle.fields.Color || '#3D6B1F',
+      inviteCode: circle.fields.InviteCode || '',
+      members,
+    };
+  } catch (e) {
+    console.error('Error loading public circle:', e);
+    return null;
+  }
+};
+
+
 // Load all reviews. Filtering by which reviews the user can see is done
 // client-side using the same shared-circle logic used for enrollments.
 export const getReviews = async () => {
@@ -583,4 +660,125 @@ export const saveReview = async (userId, campId, authorName, authorChild, rating
     date: f.Date || '',
     circleIds: f.CircleIds ? f.CircleIds.split(',').filter(Boolean) : [],
   };
+};
+
+// Wipe all Airtable data owned by this user, in dependency order.
+// For circles the user created with other members still inside, transfer
+// the CreatedBy to the oldest remaining member (by Joined date, falling
+// back to record creation order). If the user is the only member left,
+// the circle is deleted along with their membership.
+//
+// Returns { ok: true } on success, { ok: false, error } on failure.
+// This is a best-effort cleanup: if one step fails we still try the rest,
+// since the user has already confirmed they want out.
+export const deleteAccount = async (userId) => {
+  if (!userId) return { ok: false, error: 'Missing userId' };
+  const errors = [];
+  const destroyBatched = async (tableName, recordIds) => {
+    // Airtable allows up to 10 deletes per request
+    for (let i = 0; i < recordIds.length; i += 10) {
+      const chunk = recordIds.slice(i, i + 10);
+      try {
+        await base(tableName).destroy(chunk);
+      } catch (e) {
+        console.warn(`Failed to delete ${tableName} chunk:`, e);
+        errors.push(`${tableName}: ${e.message || e}`);
+      }
+    }
+  };
+
+  try {
+    // 1) Load everything we need upfront so we can make safe decisions
+    const [myKids, myMemberships, createdCircles, allMembers, myReviews] = await Promise.all([
+      base('Kids').select({ filterByFormula: `{UserId} = '${userId}'` }).all(),
+      base('CircleMembers').select({ filterByFormula: `{UserId} = '${userId}'` }).all(),
+      base('Circles').select({ filterByFormula: `{CreatedBy} = '${userId}'` }).all(),
+      base('CircleMembers').select().all(),
+      base('Reviews').select({ filterByFormula: `{UserId} = '${userId}'` }).all().catch(() => []),
+    ]);
+
+    const myKidIds = new Set(myKids.map(r => r.id));
+
+    // 2) Load enrollments / breaks / important dates tied to my kids
+    const [allEnrollments, allBreaks, allImportantDates] = await Promise.all([
+      myKidIds.size > 0 ? base('Enrollments').select().all() : Promise.resolve([]),
+      myKidIds.size > 0 ? base('Breaks').select().all() : Promise.resolve([]),
+      myKidIds.size > 0 ? base('ImportantDates').select().all() : Promise.resolve([]),
+    ]);
+    const myEnrollmentIds = allEnrollments
+      .filter(e => e.fields.Kid && myKidIds.has(e.fields.Kid[0]))
+      .map(r => r.id);
+    const myBreakIds = allBreaks
+      .filter(b => b.fields.Kid && myKidIds.has(b.fields.Kid[0]))
+      .map(r => r.id);
+    const myImportantDateIds = allImportantDates
+      .filter(d => d.fields.Kid && myKidIds.has(d.fields.Kid[0]))
+      .map(r => r.id);
+
+    // 3) Delete kid-linked data first (enrollments, breaks, important dates)
+    if (myEnrollmentIds.length > 0) await destroyBatched('Enrollments', myEnrollmentIds);
+    if (myBreakIds.length > 0) await destroyBatched('Breaks', myBreakIds);
+    if (myImportantDateIds.length > 0) await destroyBatched('ImportantDates', myImportantDateIds);
+
+    // 4) Delete reviews
+    if (myReviews.length > 0) await destroyBatched('Reviews', myReviews.map(r => r.id));
+
+    // 5) Handle circles created by this user.
+    // For each circle:
+    //   - find OTHER members (not me)
+    //   - if there are other members: transfer CreatedBy to the oldest one
+    //   - if there are no other members: delete the circle entirely
+    const circlesToDelete = [];
+    for (const circle of createdCircles) {
+      const otherMembers = allMembers.filter(m =>
+        (m.fields.Circle || []).includes(circle.id) && m.fields.UserId !== userId
+      );
+      if (otherMembers.length === 0) {
+        circlesToDelete.push(circle.id);
+        continue;
+      }
+      // Pick the oldest other member. Prefer explicit Joined date; fall back
+      // to the record's implicit creation order via the createdTime field.
+      const sorted = otherMembers.slice().sort((a, b) => {
+        const aJ = a.fields.Joined || a._rawJson?.createdTime || '';
+        const bJ = b.fields.Joined || b._rawJson?.createdTime || '';
+        return String(aJ).localeCompare(String(bJ));
+      });
+      const newOwner = sorted[0];
+      const newOwnerUserId = newOwner.fields.UserId || '';
+      if (!newOwnerUserId) {
+        // No real user to transfer to — safer to delete the circle than
+        // leave it orphaned with a bad CreatedBy value
+        circlesToDelete.push(circle.id);
+        continue;
+      }
+      try {
+        await base('Circles').update(circle.id, { CreatedBy: newOwnerUserId });
+      } catch (e) {
+        console.warn(`Failed to transfer circle ${circle.id}:`, e);
+        errors.push(`transfer ${circle.fields.Name}: ${e.message || e}`);
+      }
+    }
+
+    // 6) Delete my circle memberships (always, in all circles — my own
+    // created circles that got transferred, and circles I just joined)
+    if (myMemberships.length > 0) {
+      await destroyBatched('CircleMembers', myMemberships.map(r => r.id));
+    }
+
+    // 7) Delete the now-orphan circles
+    if (circlesToDelete.length > 0) await destroyBatched('Circles', circlesToDelete);
+
+    // 8) Finally, delete the kids themselves
+    if (myKids.length > 0) await destroyBatched('Kids', myKids.map(r => r.id));
+
+    if (errors.length > 0) {
+      console.warn('Account deletion completed with some errors:', errors);
+      return { ok: true, partialErrors: errors };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error('deleteAccount failed:', e);
+    return { ok: false, error: e.message || String(e) };
+  }
 };

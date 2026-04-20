@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -157,8 +157,36 @@ const AvatarStack = ({ members }) => {
   );
 };
 
+// Read invite code from the URL query string. Returns uppercase or null.
+function readInviteFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const urlCode = url.searchParams.get("invite");
+    if (urlCode) return urlCode.trim().toUpperCase();
+  } catch {}
+  return null;
+}
+
+// Read a stashed invite code (set when a preview visitor clicks "Sign up").
+// Used by the signed-in app to auto-join after the first kid is added.
+function readStashedInviteCode() {
+  try {
+    const stashed = window.sessionStorage.getItem("camplify_invite_code");
+    if (stashed) return stashed.trim().toUpperCase();
+  } catch {}
+  return null;
+}
+
 export default function App() {
   const { isSignedIn, isLoaded, user } = useUser();
+
+  // Invite code in the URL = a fresh arrival who should see the preview page.
+  // Stashed code = a visitor who already clicked "Sign up" and is en route
+  // to Clerk; we DO NOT show them the preview again, just let Clerk run.
+  // Both are captured once at mount so subsequent storage changes don't
+  // thrash the render.
+  const [urlInviteCode] = useState(() => readInviteFromUrl());
+  const [stashedInviteCode] = useState(() => readStashedInviteCode());
 
   // After Clerk reports `isLoaded`, it can still take a moment for a restored
   // session to propagate. Without this grace period, a page refresh briefly
@@ -181,6 +209,14 @@ export default function App() {
     </div>
   );
 
+  // Signed-out visitor who just arrived with ?invite= in the URL — show the
+  // public read-only preview. If the code is only stashed (they already
+  // clicked "Sign up" from the preview), skip preview and fall through to
+  // Clerk's sign-in/sign-up.
+  if (!isSignedIn && urlInviteCode) {
+    return <CirclePreview inviteCode={urlInviteCode} />;
+  }
+
   if (!isSignedIn) return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#F9FAFB", gap: 32 }}>
       <div style={{ textAlign: "center" }}>
@@ -191,10 +227,262 @@ export default function App() {
     </div>
   );
 
-  return <Camplify userId={user.id} userName={user.firstName || user.fullName || "Parent"} userEmail={user.primaryEmailAddress?.emailAddress} />;
+  return <Camplify userId={user.id} userName={user.firstName || user.fullName || "Parent"} userEmail={user.primaryEmailAddress?.emailAddress} pendingInviteCode={urlInviteCode || stashedInviteCode} />;
 }
 
-function Camplify({ userId, userName, userEmail }) {
+// Public read-only preview of a circle, shown to visitors who open an invite
+// link before signing up. Fetches data via getCirclePublic (no auth needed)
+// and renders a stripped-down grid using the same cell logic as the main app.
+function CirclePreview({ inviteCode }) {
+  const [circle, setCircle] = useState(null);
+  const [camps, setCamps] = useState([]);
+  const [status, setStatus] = useState("loading"); // loading | ok | notfound | error
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [circleData, campsData] = await Promise.all([
+          getCirclePublic(inviteCode),
+          getCamps(),
+        ]);
+        if (cancelled) return;
+        if (!circleData) { setStatus("notfound"); return; }
+        setCircle(circleData);
+        setCamps(campsData || []);
+        setStatus("ok");
+      } catch (e) {
+        if (!cancelled) setStatus("error");
+        console.error(e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [inviteCode]);
+
+  const handleSignUp = () => {
+    try { window.sessionStorage.setItem("camplify_invite_code", inviteCode); } catch {}
+    // Strip the ?invite= param so the URL is clean after sign-up
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("invite");
+      window.history.replaceState({}, "", url.toString());
+    } catch {}
+    // Force a re-render that will show the SignIn component. Easiest path:
+    // reload; Clerk's SignIn will come up and the invite code is safe in
+    // sessionStorage.
+    window.location.reload();
+  };
+
+  if (status === "loading") return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB" }}>
+      <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", fontFamily: "Inter, sans-serif", letterSpacing: "-1px" }}>Camplify</div>
+    </div>
+  );
+  if (status === "notfound") return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#F9FAFB", padding: 24, textAlign: "center", fontFamily: "Inter, sans-serif" }}>
+      <div style={{ fontSize: 36, fontWeight: 800, color: "#3D6B1F", letterSpacing: "-1px", marginBottom: 8 }}>Camplify</div>
+      <div style={{ fontSize: 15, color: "#6B7280", marginBottom: 24, maxWidth: 360 }}>That invite link isn't valid. It may have expired, or the circle may have been renamed.</div>
+      <button onClick={() => { try { window.sessionStorage.removeItem("camplify_invite_code"); } catch {} window.location.href = "/"; }}
+        style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>Go to Camplify</button>
+    </div>
+  );
+  if (status === "error" || !circle) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB", fontFamily: "Inter, sans-serif", color: "#6B7280" }}>
+      Something went wrong loading that invite. Please try again.
+    </div>
+  );
+
+  return <CirclePreviewGrid circle={circle} camps={camps} onSignUp={handleSignUp} />;
+}
+
+// Render a stripped-down, read-only week grid for a single circle's members.
+// Reuses the same week math as the signed-in grid. Members' kids show with
+// colored chips (enrolled = green, interested = yellow). No editing.
+function CirclePreviewGrid({ circle, camps, onSignUp }) {
+  // Build computed weeks from camp pool
+  const campPool = camps || [];
+  const weeks = getWeeksFromCamps(campPool);
+
+  // Start the grid at today's Monday
+  const todayMonday = (() => {
+    const d = new Date();
+    const dow = d.getDay();
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  })();
+
+  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const visibleWeeks = (() => {
+    const start = new Date(todayMonday + "T12:00:00");
+    let latest = new Date(todayMonday + "T12:00:00");
+    latest.setDate(latest.getDate() + 7 * 26); // 6 months ahead by default
+    campPool.forEach(c => {
+      const end = c.dateEnd || c.dateStart;
+      if (end) {
+        const d = new Date(end + "T12:00:00");
+        if (d > latest) latest = d;
+      }
+    });
+    const out = [];
+    const cur = new Date(start);
+    while (cur <= latest) {
+      const iso = toLocalIso(cur);
+      const fri = new Date(cur); fri.setDate(fri.getDate() + 4);
+      out.push({ num: iso, dates: fmt(cur) + "–" + fmt(fri) });
+      cur.setDate(cur.getDate() + 7);
+    }
+    return out;
+  })();
+
+  const members = (circle.members || []).filter(m => m.visible !== false);
+
+  const getMemberWeekCamps = (member) => {
+    const byWeek = {};
+    visibleWeeks.forEach(w => { byWeek[w.num] = []; });
+    campPool.forEach(camp => {
+      if (!member.camps.includes(camp.id)) return;
+      const memberWeeks = member.campWeeks?.[camp.id] || [];
+      const status = member.campStatus?.[camp.id] || 'enrolled';
+      visibleWeeks.forEach(w => {
+        if (campInWeek(camp, w.num)) {
+          if (memberWeeks.length === 0 || memberWeeks.includes(w.num)) {
+            byWeek[w.num].push({ ...camp, kidStatus: status });
+          }
+        }
+      });
+    });
+    (member.breaks || []).forEach(b => {
+      if (byWeek[b.weekIso] !== undefined) byWeek[b.weekIso] = [{ __break: true, label: b.label || "Break" }];
+    });
+    return byWeek;
+  };
+
+  const COL_W = 140;
+  const NAME_W = 130;
+  const ROW_H = 90;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#F9FAFB", fontFamily: "Inter, sans-serif" }}>
+      {/* Header bar with sign-up CTA */}
+      <div style={{ position: "sticky", top: 0, zIndex: 10, background: "white", borderBottom: "1px solid #E5E7EB", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#3D6B1F", letterSpacing: "-0.5px", flexShrink: 0 }}>Camplify</div>
+          <div style={{ fontSize: 13, color: "#6B7280", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            You've been invited to join <span style={{ fontWeight: 700, color: circle.color || "#3D6B1F" }}>{circle.name}</span>
+          </div>
+        </div>
+        <button onClick={onSignUp}
+          style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer", flexShrink: 0 }}>
+          Sign up to join
+        </button>
+      </div>
+
+      <div style={{ padding: "20px" }}>
+        <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 16, maxWidth: 720 }}>
+          Here's what {circle.name} has been planning for the summer. Sign up for a free Camplify account to add your own kids and share your plans back.
+        </div>
+
+        {members.length === 0 ? (
+          <div style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: 12, padding: "40px 20px", textAlign: "center", color: "#6B7280", fontSize: 14 }}>
+            No one in this circle has shared their camps yet.
+          </div>
+        ) : (
+          <div style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ display: "flex" }}>
+              {/* Frozen name column */}
+              <div style={{ width: NAME_W, flexShrink: 0, borderRight: "1px solid #E5E7EB", background: "#F9FAFB" }}>
+                <div style={{ height: 44, borderBottom: "2px solid #E5E7EB" }} />
+                {members.map(m => (
+                  <div key={m.id} style={{ height: ROW_H, display: "flex", alignItems: "center", paddingLeft: 14, gap: 8, borderBottom: "1px solid #F0F0F0" }}>
+                    <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0, background: circle.color || "#3D6B1F", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800 }}>
+                      {getMemberInitials(m.child, m.name)}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {m.child || m.name}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Scrollable week columns */}
+              <div style={{ overflowX: "auto", flex: 1 }}>
+                <div style={{ minWidth: visibleWeeks.length * (COL_W + 8) }}>
+                  {/* Header row */}
+                  <div style={{ display: "flex", height: 44, alignItems: "flex-end", borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }}>
+                    {visibleWeeks.map(w => (
+                      <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, padding: "0 0 8px", textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                        {w.dates}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Member rows */}
+                  {members.map(m => {
+                    const byWeek = getMemberWeekCamps(m);
+                    return (
+                      <div key={m.id} style={{ display: "flex", alignItems: "stretch", height: ROW_H, paddingTop: 6, paddingBottom: 6, borderBottom: "1px solid #F0F0F0" }}>
+                        {visibleWeeks.map(w => {
+                          const cellCamps = byWeek[w.num] || [];
+                          const isBreak = cellCamps.length === 1 && cellCamps[0].__break;
+                          const nonBreakCamps = isBreak ? [] : cellCamps.filter(c => !c.__break);
+                          const enrolled = nonBreakCamps.find(c => c.kidStatus === "enrolled");
+                          const thinking = nonBreakCamps.filter(c => c.kidStatus !== "enrolled").slice(0, 2);
+                          if (isBreak) {
+                            return (
+                              <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, display: "flex", alignItems: "stretch" }}>
+                                <div style={{ width: "100%", borderRadius: 10, background: "#DCFCE7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                                  <span style={{ fontSize: 14 }}>🌿</span>
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: "0.5px" }}>{cellCamps[0].label}</span>
+                                </div>
+                              </div>
+                            );
+                          }
+                          if (!enrolled && thinking.length === 0) {
+                            return (
+                              <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, display: "flex", alignItems: "stretch" }}>
+                                <div style={{ width: "100%", borderRadius: 10, border: "1.5px dashed #E5E7EB" }} />
+                              </div>
+                            );
+                          }
+                          const chips = [];
+                          if (enrolled) chips.push({ camp: enrolled, green: true });
+                          thinking.forEach(c => chips.push({ camp: c, green: false }));
+                          return (
+                            <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                              {chips.map((ch, i) => (
+                                <div key={i} style={{ flex: 1, borderRadius: 8, background: ch.green ? "#3D6B1F" : "#FEF08A", border: ch.green ? "none" : "1.5px solid #CA8A04", display: "flex", alignItems: "center", justifyContent: "center", padding: "4px 6px", minHeight: 0 }}>
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: ch.green ? "white" : "#713F12", textTransform: "uppercase", letterSpacing: "0.3px", textAlign: "center", lineHeight: 1.2, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                                    {ch.camp.name}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bottom CTA in case they've scrolled past the header */}
+        <div style={{ marginTop: 24, textAlign: "center" }}>
+          <button onClick={onSignUp}
+            style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "12px 24px", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>
+            Sign up to join {circle.name}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [activeTab, setActiveTab] = useState("grid");
   const [airtableCamps, setAirtableCamps] = useState([]);
   const [airtableKids, setAirtableKids] = useState([]);
@@ -300,6 +588,50 @@ function Camplify({ userId, userName, userEmail }) {
       setLoading(false);
     });
   }, [userId]);
+
+  // If a pending invite code exists when this Camplify session starts, the
+  // user just signed up via an invite link. After they've added their first
+  // kid and we've auto-joined the circle, show an onboarding wizard to fill
+  // out their parent name and the kid's basic profile (age, interests,
+  // visibility) so they actually show up to their new circle friends.
+  const [onboardingWizard, setOnboardingWizard] = useState(null); // null | { step, kidId, circleName }
+  // Delete account flow: null = closed, 'confirm' = showing warning, 'confirming' = user confirmed, in progress, 'error' = failed
+  const [deleteAccountModal, setDeleteAccountModal] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteAccountError, setDeleteAccountError] = useState("");
+  // Clerk instance for account deletion + sign-out. Called unconditionally
+  // at the top level so hooks stay in a consistent order across renders.
+  const clerkInstance = useClerk();
+  // Header avatar dropdown (contains Sign out). Null = closed.
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const didAutoJoinRef = useRef(false);
+  useEffect(() => {
+    if (didAutoJoinRef.current) return;
+    if (!pendingInviteCode) return;
+    if (loading) return;
+    if (airtableKids.length === 0) return;
+    const firstKid = airtableKids[0];
+    didAutoJoinRef.current = true;
+    (async () => {
+      let joinedCircleName = "your circle";
+      try {
+        const result = await joinCircleByCode(userId, userName || "", firstKid.name || "", pendingInviteCode);
+        if (result && !result.error) {
+          joinedCircleName = result.name || joinedCircleName;
+          setAirtableCircles(prev => {
+            const existing = prev.find(c => c.id === result.id);
+            return existing ? prev.map(c => c.id === result.id ? result : c) : [...prev, result];
+          });
+        }
+      } catch (e) {
+        console.warn('Auto-join failed:', e);
+      } finally {
+        try { window.sessionStorage.removeItem("camplify_invite_code"); } catch {}
+      }
+      // Kick off the onboarding wizard for this new invite-joined user.
+      setOnboardingWizard({ step: 0, kidId: firstKid.id, circleName: joinedCircleName });
+    })();
+  }, [pendingInviteCode, loading, airtableKids, userId, userName]);
   const [selectedWeek, setSelectedWeek] = useState(3);
   const [selectedCircles, setSelectedCircles] = useState(new Set()); // empty = all
   const toggleCircle = (id) => setSelectedCircles(prev => {
@@ -999,7 +1331,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
           background: none; border: none; cursor: pointer;
           font-family: 'Inter', sans-serif; font-weight: 600; font-size: 13px;
           color: var(--gray-500); padding: 6px 14px; border-radius: var(--radius-sm);
-          transition: all 0.15s;
+          transition: all 0.15s; white-space: nowrap;
         }
         .nav-btn:hover { color: var(--gray-900); }
         .nav-btn.active { background: var(--white); color: var(--gray-900); box-shadow: var(--shadow-sm); }
@@ -1007,7 +1339,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
           background: #3D6B1F; border: none; cursor: pointer;
           font-family: 'Inter', sans-serif; font-weight: 600; font-size: 13px;
           color: white; padding: 7px 14px; border-radius: var(--radius);
-          transition: all 0.15s; margin-left: 10px;
+          transition: all 0.15s; margin-left: 10px; white-space: nowrap;
         }
         .nav-add-camp-btn:hover { background: #2D5016; }
 
@@ -1605,6 +1937,249 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
         .section-sub { font-size: 13px; color: var(--gray-500); margin-bottom: 20px; }
       `}</style>
 
+      {/* ── INVITE ONBOARDING WIZARD ──
+          Shown only to users who arrived via an invite link. Walks them
+          through setting their display name + their kid's age, interests,
+          and visibility, so they actually appear to their new circle. */}
+      {onboardingWizard && (() => {
+        const wiz = onboardingWizard;
+        const kid = airtableKids.find(k => k.id === wiz.kidId);
+        if (!kid) return null; // kid vanished (shouldn't happen) — close silently
+        const profile = kidProfiles[kid.id] || { interests: new Set(), zipcode: "", visible: true, age: "", bio: "" };
+        const interestsSet = profile.interests instanceof Set ? profile.interests : new Set(profile.interests || []);
+        const WIZARD_TYPES = [
+          { value: "sports",   emoji: "⚽", label: "Sports" },
+          { value: "art",      emoji: "🎨", label: "Art" },
+          { value: "drama",    emoji: "🎭", label: "Drama" },
+          { value: "dance",    emoji: "🩰", label: "Dance" },
+          { value: "outdoors", emoji: "🌲", label: "Outdoors" },
+          { value: "language", emoji: "🌍", label: "Language" },
+          { value: "classic",  emoji: "🏕️", label: "Classic" },
+          { value: "stem",     emoji: "🔬", label: "STEM" },
+          { value: "music",    emoji: "🎵", label: "Music" },
+          { value: "academics",emoji: "📚", label: "Academics" },
+        ];
+        const WIZARD_AGES = ["4","5","6","7","8","9","10","11","12","13","14","15"];
+        const goNext = () => setOnboardingWizard(w => ({ ...w, step: w.step + 1 }));
+        const patchProfile = (patch) => setKidProfiles(prev => ({
+          ...prev,
+          [kid.id]: { ...(prev[kid.id] || { interests: new Set(), zipcode: "", visible: true, age: "", bio: "" }), ...patch }
+        }));
+        const saveStep1ParentName = async () => {
+          if (!parentName.trim()) return;
+          await updateParentName(userId, parentName.trim()).catch(console.error);
+          // Refresh circles so the updated parent name shows for friends
+          getCircles(userId).then(setAirtableCircles).catch(console.error);
+          goNext();
+        };
+        const saveStep2Age = async () => {
+          if (!profile.age) return;
+          await updateKid(kid.id, { age: profile.age }).catch(console.error);
+          goNext();
+        };
+        const saveStep3Interests = async () => {
+          await updateKid(kid.id, { interests: interestsSet }).catch(console.error);
+          goNext();
+        };
+        const saveStep4AndFinish = async () => {
+          // Ensure visibility defaults to true if they didn't toggle it off
+          const visibleVal = profile.visible !== false;
+          patchProfile({ visible: visibleVal });
+          await updateKid(kid.id, { visible: visibleVal }).catch(console.error);
+          getCircles(userId).then(setAirtableCircles).catch(console.error);
+          setOnboardingWizard(null);
+        };
+
+        const totalSteps = 4;
+        const stepNum = wiz.step + 1;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "#F9FAFB", zIndex: 2000, overflowY: "auto", fontFamily: "Inter, sans-serif" }}>
+            <div style={{ maxWidth: 520, margin: "0 auto", padding: "48px 24px" }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: "#3D6B1F", letterSpacing: "-1px", marginBottom: 4, textAlign: "center" }}>Camplify</div>
+              <div style={{ fontSize: 13, color: "#9CA3AF", textAlign: "center", marginBottom: 28 }}>
+                Step {stepNum} of {totalSteps} · Welcome to {wiz.circleName}!
+              </div>
+              {/* Progress bar */}
+              <div style={{ height: 4, background: "#E5E7EB", borderRadius: 2, marginBottom: 32, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(stepNum / totalSteps) * 100}%`, background: "#3D6B1F", transition: "width 0.2s" }} />
+              </div>
+
+              {wiz.step === 0 && (
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>What should your circle call you?</div>
+                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>This is how other parents in {wiz.circleName} will see your name.</div>
+                  <input autoFocus value={parentName} onChange={e => setParentName(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") saveStep1ParentName(); }}
+                    placeholder="e.g. Simran K."
+                    style={{ width: "100%", padding: "12px 14px", border: "2px solid #E5E7EB", borderRadius: 10, fontSize: 15, fontWeight: 500, color: "#1F2937", outline: "none", marginBottom: 16 }}
+                    onFocus={e => e.target.style.borderColor = "#3D6B1F"}
+                    onBlur={e => e.target.style.borderColor = "#E5E7EB"} />
+                  <button onClick={saveStep1ParentName} disabled={!parentName.trim()}
+                    style={{ width: "100%", background: parentName.trim() ? "#3D6B1F" : "#E5E7EB", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 700, color: parentName.trim() ? "white" : "#9CA3AF", cursor: parentName.trim() ? "pointer" : "not-allowed" }}>
+                    Continue
+                  </button>
+                </div>
+              )}
+
+              {wiz.step === 1 && (
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>How old is {kid.name}?</div>
+                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>This helps suggest age-appropriate camps.</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 20 }}>
+                    {WIZARD_AGES.map(a => {
+                      const selected = String(profile.age) === a;
+                      return (
+                        <button key={a}
+                          onClick={() => patchProfile({ age: a })}
+                          style={{ padding: "12px 0", borderRadius: 10, border: `2px solid ${selected ? "#3D6B1F" : "#E5E7EB"}`, background: selected ? "#3D6B1F" : "white", color: selected ? "white" : "#374151", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                          {a}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={saveStep2Age} disabled={!profile.age}
+                    style={{ width: "100%", background: profile.age ? "#3D6B1F" : "#E5E7EB", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 700, color: profile.age ? "white" : "#9CA3AF", cursor: profile.age ? "pointer" : "not-allowed" }}>
+                    Continue
+                  </button>
+                </div>
+              )}
+
+              {wiz.step === 2 && (
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>What is {kid.name} into?</div>
+                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>Pick a few interests — we'll use these to flag camps they might love. You can skip if you're not sure.</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
+                    {WIZARD_TYPES.map(t => {
+                      const selected = interestsSet.has(t.value);
+                      return (
+                        <button key={t.value}
+                          onClick={() => {
+                            const next = new Set(interestsSet);
+                            if (next.has(t.value)) next.delete(t.value); else next.add(t.value);
+                            patchProfile({ interests: next });
+                          }}
+                          style={{ padding: "8px 14px", borderRadius: 22, border: `1.5px solid ${selected ? "#3D6B1F" : "#E5E7EB"}`, background: selected ? "#3D6B1F" : "white", color: selected ? "white" : "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span>{t.emoji}</span>{t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={saveStep3Interests}
+                    style={{ width: "100%", background: "#3D6B1F", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 700, color: "white", cursor: "pointer" }}>
+                    Continue
+                  </button>
+                </div>
+              )}
+
+              {wiz.step === 3 && (
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>Share {kid.name}'s schedule with {wiz.circleName}?</div>
+                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>Members of your circle will be able to see which camps {kid.name} is signed up for or interested in. You can change this anytime.</div>
+                  <div style={{ background: "white", border: "1.5px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1F2937" }}>Share {kid.name}'s camps</div>
+                      <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>Recommended — otherwise your circle can't see your plans</div>
+                    </div>
+                    <button onClick={() => patchProfile({ visible: !(profile.visible !== false) })}
+                      style={{ width: 46, height: 26, borderRadius: 13, background: profile.visible !== false ? "#3D6B1F" : "#D1D5DB", border: "none", position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.15s" }}>
+                      <span style={{ position: "absolute", top: 3, left: profile.visible !== false ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "white", transition: "left 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                    </button>
+                  </div>
+                  <button onClick={saveStep4AndFinish}
+                    style={{ width: "100%", background: "#3D6B1F", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 700, color: "white", cursor: "pointer" }}>
+                    Finish setup
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── DELETE ACCOUNT CONFIRMATION MODAL ── */}
+      {deleteAccountModal && (() => {
+        const clerkUser = clerkInstance?.user || null;
+        const signOut = clerkInstance?.signOut ? clerkInstance.signOut.bind(clerkInstance) : (async () => {});
+        const confirmTextValid = deleteConfirmText.trim().toUpperCase() === "DELETE";
+        const inProgress = deleteAccountModal === "confirming";
+        const doDelete = async () => {
+          if (!confirmTextValid || inProgress) return;
+          setDeleteAccountModal("confirming");
+          setDeleteAccountError("");
+          try {
+            const result = await deleteAccount(userId);
+            if (!result.ok) {
+              setDeleteAccountError(result.error || "Something went wrong while deleting your data.");
+              setDeleteAccountModal("confirm");
+              return;
+            }
+            // Airtable data is gone. Now delete the Clerk user itself.
+            // If that fails, the account data is still wiped and next sign-in
+            // will show an empty state — so we proceed to sign-out either way.
+            try {
+              if (clerkUser && typeof clerkUser.delete === "function") {
+                await clerkUser.delete();
+              }
+            } catch (e) {
+              console.warn('Clerk user deletion failed (data already cleaned up):', e);
+            }
+            try { await signOut(); } catch {}
+            // Full reload to clear all React state and land on the welcome screen
+            window.location.href = "/";
+          } catch (e) {
+            console.error('Delete failed:', e);
+            setDeleteAccountError(e.message || "Something went wrong.");
+            setDeleteAccountModal("confirm");
+          }
+        };
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100, padding: 16, fontFamily: "Inter, sans-serif" }}
+            onClick={() => { if (!inProgress) setDeleteAccountModal(null); }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ background: "white", borderRadius: 16, padding: 24, maxWidth: 440, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.2)" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#DC2626", marginBottom: 10 }}>Delete your account?</div>
+              <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.5, marginBottom: 14 }}>
+                This will permanently delete:
+              </div>
+              <ul style={{ fontSize: 13.5, color: "#374151", lineHeight: 1.7, margin: "0 0 16px 18px", padding: 0 }}>
+                <li>Your kids' profiles and camp enrollments</li>
+                <li>Your breaks, important dates, and reviews</li>
+                <li>Your membership in all circles</li>
+                <li>Any circles you created where you're the only member</li>
+              </ul>
+              <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 16, padding: "10px 12px", background: "#FEF2F2", borderRadius: 8, borderLeft: "3px solid #FCA5A5" }}>
+                Circles you created that have other members will be handed off to the longest-standing member, so their plans aren't disrupted.
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                Type <span style={{ fontFamily: "monospace", background: "#F3F4F6", padding: "2px 6px", borderRadius: 4, color: "#DC2626" }}>DELETE</span> to confirm:
+              </div>
+              <input autoFocus value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && confirmTextValid && !inProgress) doDelete(); }}
+                disabled={inProgress}
+                style={{ width: "100%", padding: "10px 12px", border: "2px solid #E5E7EB", borderRadius: 8, fontSize: 14, color: "#1F2937", outline: "none", marginBottom: 16, fontFamily: "monospace", letterSpacing: "0.1em" }}
+                onFocus={e => e.target.style.borderColor = "#DC2626"}
+                onBlur={e => e.target.style.borderColor = "#E5E7EB"} />
+              {deleteAccountError && (
+                <div style={{ fontSize: 13, color: "#DC2626", marginBottom: 12, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>
+                  {deleteAccountError}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setDeleteAccountModal(null)} disabled={inProgress}
+                  style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, color: "#6B7280", cursor: inProgress ? "default" : "pointer" }}>
+                  Cancel
+                </button>
+                <button onClick={doDelete} disabled={!confirmTextValid || inProgress}
+                  style={{ background: confirmTextValid && !inProgress ? "#DC2626" : "#FCA5A5", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 700, color: "white", cursor: confirmTextValid && !inProgress ? "pointer" : "not-allowed" }}>
+                  {inProgress ? "Deleting..." : "Delete permanently"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="app">
         {/* HEADER */}
         <header className="header">
@@ -1663,28 +2238,85 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 </>
               )}
             </nav>
-            {/* User menu */}
-            {(() => {
-              const { signOut } = useClerk();
-              return (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 12 }}>
-                  <div style={{
-                    width: 32, height: 32, borderRadius: "50%", background: "#3D6B1F",
-                    color: "white", display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 700, flexShrink: 0, cursor: "default",
-                    title: userName,
-                  }}>{(userName || "P")[0]}</div>
-                  <button
-                    onClick={() => signOut()}
-                    style={{
-                      background: "none", border: "1px solid #E5E7EB", borderRadius: 7,
-                      padding: "5px 10px", fontFamily: "Inter, sans-serif",
-                      fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer",
-                    }}
-                  >Sign out</button>
-                </div>
-              );
-            })()}
+            {/* User menu: green "Invite friends" button + avatar dropdown */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 12 }}>
+              <button
+                onClick={() => {
+                  // If the user is in exactly one circle, open its invite form directly;
+                  // otherwise drop them on the Circles tab to pick one.
+                  if (liveCircles.length === 1) {
+                    setActiveTab("circles");
+                    setInviteCircleId(liveCircles[0].id);
+                  } else {
+                    setActiveTab("circles");
+                    setInviteCircleId(null);
+                  }
+                }}
+                style={{
+                  background: "#3D6B1F", border: "none", borderRadius: 8,
+                  padding: "7px 14px", fontFamily: "Inter, sans-serif",
+                  fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  transition: "filter 0.12s", whiteSpace: "nowrap",
+                }}
+                onMouseEnter={e => e.currentTarget.style.filter = "brightness(1.08)"}
+                onMouseLeave={e => e.currentTarget.style.filter = "none"}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                Invite
+              </button>
+              {/* Avatar button + dropdown */}
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => setHeaderMenuOpen(v => !v)}
+                  title={userName}
+                  style={{
+                    width: 32, height: 32, borderRadius: "50%",
+                    background: "#3D6B1F", color: "white",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 700, flexShrink: 0,
+                    border: headerMenuOpen ? "2px solid #1F2937" : "none",
+                    cursor: "pointer", padding: 0,
+                  }}
+                >{(userName || "P")[0]}</button>
+                {headerMenuOpen && (
+                  <>
+                    {/* Invisible click-catcher to close menu when clicking elsewhere */}
+                    <div
+                      onClick={() => setHeaderMenuOpen(false)}
+                      style={{ position: "fixed", inset: 0, zIndex: 40 }}
+                    />
+                    <div style={{
+                      position: "absolute", top: 40, right: 0,
+                      minWidth: 180, background: "white",
+                      border: "1px solid #E5E7EB", borderRadius: 10,
+                      boxShadow: "0 10px 30px rgba(0,0,0,0.12)",
+                      zIndex: 41, overflow: "hidden",
+                      fontFamily: "Inter, sans-serif",
+                    }}>
+                      <div style={{ padding: "10px 14px", borderBottom: "1px solid #F3F4F6" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px" }}>Signed in as</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#1F2937", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userName || "Parent"}</div>
+                      </div>
+                      <button
+                        onClick={() => { setHeaderMenuOpen(false); if (clerkInstance?.signOut) clerkInstance.signOut(); }}
+                        style={{
+                          width: "100%", background: "none", border: "none",
+                          padding: "10px 14px", fontFamily: "Inter, sans-serif",
+                          fontSize: 13, fontWeight: 600, color: "#374151",
+                          cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"}
+                        onMouseLeave={e => e.currentTarget.style.background = "none"}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </header>
 
@@ -3913,9 +4545,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             if (kids.length === 0 && addingKid) {
               const doSave = async () => {
                 if (!newKidName.trim() || savingKid) return;
+                const lastI = newKidLastInitial.trim().toUpperCase().slice(0, 1);
                 setSavingKid(true);
                 const firstName = newKidName.trim();
-                const lastI = newKidLastInitial.trim().toUpperCase().slice(0, 1);
                 const displayName = lastI ? `${firstName} ${lastI}.` : firstName;
                 const initials = (firstName[0] + (lastI || firstName[1] || "")).toUpperCase();
                 const newKid = await saveKid(userId, displayName, initials);
@@ -3927,6 +4559,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 getCircles(userId).then(setAirtableCircles).catch(console.error);
                 setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); setSavingKid(false);
               };
+              const canSave1 = !!newKidName.trim();
               return (
                 <div style={{ maxWidth: 400, margin: "60px auto", textAlign: "center" }}>
                   <div style={{ fontSize: 18, fontWeight: 700, color: "#1F2937", marginBottom: 24 }}>What's your child's name?</div>
@@ -3934,11 +4567,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     <input autoFocus placeholder="First name" value={newKidName} onChange={e => setNewKidName(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter") doSave(); }}
                       style={{ width: "100%", padding: "12px 16px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 600, color: "#1F2937", outline: "none" }} />
-                    <input placeholder="Last initial (optional)" value={newKidLastInitial} maxLength={1} onChange={e => setNewKidLastInitial(e.target.value)}
+                    <input placeholder="Last initial (optional)" value={newKidLastInitial} maxLength={1}
+                      onChange={e => {
+                        const v = e.target.value;
+                        // Only accept A-Z / a-z; strip anything else
+                        if (v === "" || /^[A-Za-z]$/.test(v)) setNewKidLastInitial(v.toUpperCase());
+                      }}
                       onKeyDown={e => { if (e.key === "Enter") doSave(); }}
                       style={{ width: "100%", padding: "12px 16px", border: "2px solid #E5E7EB", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 600, color: "#1F2937", outline: "none" }} />
-                    <button disabled={!newKidName.trim() || savingKid} onClick={doSave}
-                      style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "12px", fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 700, color: "white", cursor: "pointer", opacity: newKidName.trim() ? 1 : 0.4 }}>
+                    <button disabled={!canSave1 || savingKid} onClick={doSave}
+                      style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "12px", fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 700, color: "white", cursor: canSave1 ? "pointer" : "not-allowed", opacity: canSave1 ? 1 : 0.4 }}>
                       {savingKid ? "Saving..." : "Add Child"}
                     </button>
                     <button onClick={() => setAddingKid(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 14 }}>Cancel</button>
@@ -3978,9 +4616,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   {(() => {
                     const doSave = async () => {
                       if (!newKidName.trim() || savingKid) return;
+                      const lastI = newKidLastInitial.trim().toUpperCase().slice(0, 1);
                       setSavingKid(true);
                       const firstName = newKidName.trim();
-                      const lastI = newKidLastInitial.trim().toUpperCase().slice(0, 1);
                       const displayName = lastI ? `${firstName} ${lastI}.` : firstName;
                       const initials = (firstName[0] + (lastI || firstName[1] || "")).toUpperCase();
                       const newKid = await saveKid(userId, displayName, initials);
@@ -3990,6 +4628,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       getCircles(userId).then(setAirtableCircles).catch(console.error);
                       setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); setSavingKid(false);
                     };
+                    const canSave2 = !!newKidName.trim();
                     return addingKid ? (
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <input
@@ -4001,17 +4640,20 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           style={{ padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "#1F2937", outline: "none", width: 130 }}
                         />
                         <input
-                          placeholder="Last initial"
+                          placeholder="Last initial (optional)"
                           value={newKidLastInitial}
                           maxLength={1}
-                          onChange={e => setNewKidLastInitial(e.target.value)}
+                          onChange={e => {
+                            const v = e.target.value;
+                            if (v === "" || /^[A-Za-z]$/.test(v)) setNewKidLastInitial(v.toUpperCase());
+                          }}
                           onKeyDown={e => { if (e.key === "Enter") doSave(); if (e.key === "Escape") { setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); } }}
-                          style={{ padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "#1F2937", outline: "none", width: 100 }}
+                          style={{ padding: "8px 14px", border: "2px solid #3D6B1F", borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "#1F2937", outline: "none", width: 140 }}
                         />
                         <button
-                          disabled={!newKidName.trim() || savingKid}
+                          disabled={!canSave2 || savingKid}
                           onClick={doSave}
-                          style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "8px 16px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer", opacity: newKidName.trim() && !savingKid ? 1 : 0.4 }}
+                          style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "8px 16px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: canSave2 && !savingKid ? "pointer" : "not-allowed", opacity: canSave2 && !savingKid ? 1 : 0.4 }}
                         >{savingKid ? "Saving..." : "Add"}</button>
                         <button onClick={() => { setNewKidName(""); setNewKidLastInitial(""); setAddingKid(false); }}
                           style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 14 }}>Cancel</button>
@@ -4234,7 +4876,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           onClick={async () => {
                             setJoinLoading(true); setJoinError("");
                             try {
-                              const result = await joinCircleByCode(joinCode.trim(), userId, parentName, kids.find(k => k.id === profileKidId)?.name || "");
+                              const result = await joinCircleByCode(userId, parentName, kids.find(k => k.id === profileKidId)?.name || "", joinCode.trim());
                               if (result) {
                                 setAirtableCircles(prev => {
                                   const existing = prev.find(c => c.id === result.id);
@@ -4356,6 +4998,21 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     );
                   })()}
 
+                  {/* Danger zone: delete account. Shown at the bottom of the
+                      Kids tab, small/quiet, since most users shouldn't need it. */}
+                  <div style={{ marginTop: 48, paddingTop: 24, borderTop: "1px solid #F0F0F0" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 12 }}>Account</div>
+                    <button
+                      onClick={() => { setDeleteConfirmText(""); setDeleteAccountError(""); setDeleteAccountModal("confirm"); }}
+                      style={{ background: "none", border: "1px solid #FCA5A5", borderRadius: 8, padding: "8px 14px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 600, color: "#DC2626", cursor: "pointer" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "#FEF2F2"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+                    >Delete my account</button>
+                    <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>
+                      This permanently removes your kids, enrollments, and circle memberships. Can't be undone.
+                    </div>
+                  </div>
+
                 </div>
               </div>
             );
@@ -4365,7 +5022,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
           {activeTab === "circles" && (
             <>
               <h1 className="section-title">My Circles</h1>
-              <p className="section-sub">1st grade friends and other parent groups with whom you share camp plans.</p>
 
               <div className="liveCircles-grid">
                 {liveCircles.map((circle) => {
@@ -4436,25 +5092,42 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           {inviteCircleId === circle.id ? (
                             <div className="invite-form">
                               <div className="invite-form-title">Invite to {circle.name}</div>
-                              {circle.inviteCode && (
-                                <div style={{ background: "#F9FAFB", borderRadius: 8, padding: "10px 12px", marginBottom: 10, border: "1px solid #E5E7EB" }}>
-                                  <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>INVITE CODE</div>
-                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                                    <span style={{ fontSize: 22, fontWeight: 800, color: "#3D6B1F", fontFamily: "monospace", letterSpacing: "0.15em" }}>{circle.inviteCode}</span>
-                                    <button
-                                      onClick={async () => { await navigator.clipboard.writeText(circle.inviteCode); setInviteSent(true); setTimeout(() => setInviteSent(false), 2000); }}
-                                      style={{ background: inviteSent ? "#3D6B1F" : "white", border: "1px solid #E5E7EB", borderRadius: 6, padding: "4px 10px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: inviteSent ? "white" : "#374151", cursor: "pointer" }}
-                                    >{inviteSent ? "✓ Copied!" : "Copy"}</button>
-                                  </div>
-                                  <div style={{ fontSize: 11.5, color: "#9CA3AF", marginTop: 4 }}>Share this code with parents - they enter it in the "Join a Circle" section</div>
-                                </div>
-                              )}
-                              <div className="invite-or">or share via</div>
-                              <div className="invite-share-row">
-                                <a className="invite-share-btn" href={`sms:?body=${encodeURIComponent(`Join my ${circle.name} circle on Camplify! Use invite code: ${circle.inviteCode}\n\nSign up at https://camplify.vercel.app`)}`}>Text</a>
-                                <a className="invite-share-btn" href={`https://wa.me/?text=${encodeURIComponent(`Join my ${circle.name} circle on Camplify! Use invite code: ${circle.inviteCode}`)}`} target="_blank" rel="noreferrer">WhatsApp</a>
-                                <a className="invite-share-btn" href={`mailto:?subject=${encodeURIComponent(`Join ${circle.name} on Camplify`)}&body=${encodeURIComponent(`Hey! Join my ${circle.name} circle on Camplify to share summer camp plans.\n\nUse invite code: ${circle.inviteCode}\n\nSign up or log in at https://camplify.vercel.app`)}`}>Email</a>
-                              </div>
+                              {circle.inviteCode && (() => {
+                                const inviteUrl = `${window.location.origin}/?invite=${circle.inviteCode}`;
+                                const smsBody = `Join my ${circle.name} circle on Camplify! ${inviteUrl}`;
+                                const emailBody = `Hey! Join my ${circle.name} circle on Camplify to share summer camp plans.\n\nClick here to preview and sign up: ${inviteUrl}\n\nOr use invite code: ${circle.inviteCode}`;
+                                return (
+                                  <>
+                                    <div style={{ background: "#F9FAFB", borderRadius: 8, padding: "10px 12px", marginBottom: 10, border: "1px solid #E5E7EB" }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>INVITE LINK</div>
+                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                        <span style={{ fontSize: 12.5, fontWeight: 500, color: "#374151", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{inviteUrl}</span>
+                                        <button
+                                          onClick={async () => { try { await navigator.clipboard.writeText(inviteUrl); } catch {} setInviteSent(true); setTimeout(() => setInviteSent(false), 2000); }}
+                                          style={{ background: inviteSent ? "#3D6B1F" : "white", border: "1px solid #E5E7EB", borderRadius: 6, padding: "4px 10px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: inviteSent ? "white" : "#374151", cursor: "pointer", flexShrink: 0 }}
+                                        >{inviteSent ? "✓ Copied!" : "Copy link"}</button>
+                                      </div>
+                                      <div style={{ fontSize: 11.5, color: "#9CA3AF", marginTop: 4 }}>New parents can preview the circle before signing up</div>
+                                    </div>
+                                    <div style={{ background: "#F9FAFB", borderRadius: 8, padding: "8px 12px", marginBottom: 10, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                      <div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF" }}>OR INVITE CODE</div>
+                                        <span style={{ fontSize: 15, fontWeight: 800, color: "#3D6B1F", fontFamily: "monospace", letterSpacing: "0.12em" }}>{circle.inviteCode}</span>
+                                      </div>
+                                      <button
+                                        onClick={async () => { try { await navigator.clipboard.writeText(circle.inviteCode); } catch {} }}
+                                        style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: 6, padding: "4px 10px", fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600, color: "#374151", cursor: "pointer" }}
+                                      >Copy code</button>
+                                    </div>
+                                    <div className="invite-or">or share via</div>
+                                    <div className="invite-share-row">
+                                      <a className="invite-share-btn" href={`sms:?body=${encodeURIComponent(smsBody)}`}>Text</a>
+                                      <a className="invite-share-btn" href={`https://wa.me/?text=${encodeURIComponent(smsBody)}`} target="_blank" rel="noreferrer">WhatsApp</a>
+                                      <a className="invite-share-btn" href={`mailto:?subject=${encodeURIComponent(`Join ${circle.name} on Camplify`)}&body=${encodeURIComponent(emailBody)}`}>Email</a>
+                                    </div>
+                                  </>
+                                );
+                              })()}
                               <button className="invite-cancel" onClick={() => { setInviteCircleId(null); }}>Done</button>
                             </div>
                           ) : (
