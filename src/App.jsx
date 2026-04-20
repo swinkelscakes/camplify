@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -408,7 +408,52 @@ function CirclePreviewGrid({ circle, camps, onSignUp }) {
               </div>
 
               {/* Scrollable week columns */}
-              <div style={{ overflowX: "auto", flex: 1 }}>
+              <div
+                ref={el => {
+                  if (!el || el.__camplifyScrolled) return;
+                  if (!visibleWeeks || visibleWeeks.length === 0) return;
+                  if (!members || members.length === 0) return;
+                  const todayIso = (() => {
+                    const d = new Date();
+                    const y = d.getFullYear();
+                    const mo = String(d.getMonth() + 1).padStart(2, "0");
+                    const da = String(d.getDate()).padStart(2, "0");
+                    return `${y}-${mo}-${da}`;
+                  })();
+                  // Find the earliest upcoming enrolled camp across the circle's members
+                  let nextCampStart = null;
+                  members.forEach(m => {
+                    (m.camps || []).forEach(cid => {
+                      const camp = campPool.find(c => c.id === cid);
+                      if (!camp) return;
+                      const status = m.campStatus?.[cid] || 'enrolled';
+                      if (status !== 'enrolled') return;
+                      const end = camp.dateEnd || camp.dateStart;
+                      if (!camp.dateStart || !end) return;
+                      if (end < todayIso) return;
+                      if (!nextCampStart || camp.dateStart < nextCampStart) {
+                        nextCampStart = camp.dateStart;
+                      }
+                    });
+                  });
+                  if (!nextCampStart) { el.__camplifyScrolled = true; return; }
+                  // Monday of that camp, step back one week
+                  const targetMonday = (() => {
+                    const d = new Date(nextCampStart + "T12:00:00");
+                    const dow = d.getDay();
+                    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+                    d.setDate(d.getDate() - 7);
+                    const y = d.getFullYear();
+                    const mo = String(d.getMonth() + 1).padStart(2, "0");
+                    const da = String(d.getDate()).padStart(2, "0");
+                    return `${y}-${mo}-${da}`;
+                  })();
+                  const idx = visibleWeeks.findIndex(w => w.num === targetMonday);
+                  if (idx > 0) el.scrollLeft = idx * (COL_W + 8);
+                  el.__camplifyScrolled = true;
+                }}
+                style={{ overflowX: "auto", flex: 1 }}
+              >
                 <div style={{ minWidth: visibleWeeks.length * (COL_W + 8) }}>
                   {/* Header row */}
                   <div style={{ display: "flex", height: 44, alignItems: "flex-end", borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }}>
@@ -490,6 +535,7 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [enrollmentIds, setEnrollmentIds] = useState({});
   const [breakIds, setBreakIds] = useState({});
   const [importantDates, setImportantDates] = useState([]); // [{ id, kidId, label, dateStart, dateEnd }]
+  const [circleDates, setCircleDates] = useState([]); // [{ id, circleId, label, dateStart, dateEnd, createdBy }]
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -503,9 +549,14 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       setProfileKidId(kidsData[0]?.id || null);
       setImportKidId(kidsData[0]?.id || null);
 
-      // Load circles independently so failure doesn't crash the app
-      getCircles(userId).then(circlesData => {
+      // Load circles independently so failure doesn't crash the app.
+      // Once loaded, also pull down the circle-level important dates.
+      getCircles(userId).then(async circlesData => {
         setAirtableCircles(circlesData);
+        try {
+          const circleDatesData = await getCircleDates(circlesData.map(c => c.id));
+          setCircleDates(circleDatesData);
+        } catch (e) { console.warn('Circle dates failed to load:', e); }
       }).catch(err => console.warn('Circles failed to load:', err));
 
       // Load reviews independently so a review-table misconfiguration
@@ -604,6 +655,13 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const clerkInstance = useClerk();
   // Header avatar dropdown (contains Sign out). Null = closed.
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  // Circle-level date editor state (shared across circles — only one open at a time)
+  const [circleDateCircleId, setCircleDateCircleId] = useState(null); // which circle is editing
+  const [circleDateEditId, setCircleDateEditId] = useState(null); // which existing date is being edited (null = adding new)
+  const [circleDateLabel, setCircleDateLabel] = useState("");
+  const [circleDateStart, setCircleDateStart] = useState("");
+  const [circleDateEnd, setCircleDateEnd] = useState("");
+  const [circleDateSaving, setCircleDateSaving] = useState(false);
   const didAutoJoinRef = useRef(false);
   useEffect(() => {
     if (didAutoJoinRef.current) return;
@@ -982,6 +1040,46 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       .map(([date, name]) => ({ date, name }));
   };
 
+  // Get circle-level important dates that fall in a given week.
+  // If circleIdFilter is provided, only dates for those circles are returned
+  // (used for per-row rendering so friends only see their own circles' dates).
+  // Multi-day dates are expanded: each day in the range within the week gets
+  // its own entry, so callers can look up by `date` the same way as holidays.
+  const getCircleDatesInWeek = (weekIso, circleIdFilter) => {
+    const start = new Date(weekIso + "T00:00:00");
+    const end = new Date(start); end.setDate(end.getDate() + 6);
+    const out = [];
+    const filterSet = circleIdFilter ? (circleIdFilter instanceof Set ? circleIdFilter : new Set(circleIdFilter)) : null;
+    // Airtable "Date" fields usually return "YYYY-MM-DD" but "Date and time"
+    // fields return ISO strings like "YYYY-MM-DDT00:00:00.000Z". Strip time
+    // component if present so date math is consistent either way.
+    const normalizeDateStr = (s) => {
+      if (!s) return '';
+      return String(s).slice(0, 10);
+    };
+    circleDates.forEach(cd => {
+      if (filterSet && !filterSet.has(cd.circleId)) return;
+      const startIso = normalizeDateStr(cd.dateStart);
+      if (!startIso) return;
+      const endIso = normalizeDateStr(cd.dateEnd) || startIso;
+      const ds = new Date(startIso + "T12:00:00");
+      const de = new Date(endIso + "T12:00:00");
+      if (isNaN(ds.getTime()) || isNaN(de.getTime())) return;
+      // Walk each day in the range and emit entries that land inside the week
+      const cur = new Date(ds);
+      while (cur <= de) {
+        if (cur >= start && cur <= end) {
+          const y = cur.getFullYear();
+          const m = String(cur.getMonth() + 1).padStart(2, "0");
+          const d = String(cur.getDate()).padStart(2, "0");
+          out.push({ date: `${y}-${m}-${d}`, name: cd.label, circleId: cd.circleId, id: cd.id });
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+    return out;
+  };
+
   // Use airtableKids as the source of truth, fall back to empty array
   const kids = airtableKids;
 
@@ -1113,18 +1211,21 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   };
 
   const handleNativeShare = async (camp) => {
-    const text = `Check out ${camp.name} - ${camp.dates} at ${camp.location}!`;
+    const baseText = `Check out ${camp.name} - ${camp.dates} at ${camp.location}`;
+    const text = camp.url && camp.url !== "#" ? `${baseText}\n${camp.url}` : baseText;
     if (navigator.share) {
       try { await navigator.share({ title: camp.name, text }); } catch {}
     } else {
-      await navigator.clipboard.writeText(text);
+      try { await navigator.clipboard.writeText(text); } catch {}
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     }
   };
 
   const getShareLinks = (camp) => {
-    const text = encodeURIComponent(`Check out ${camp.name} - ${camp.dates} at ${camp.location}!`);
+    const baseText = `Check out ${camp.name} - ${camp.dates} at ${camp.location}`;
+    const full = camp.url && camp.url !== "#" ? `${baseText}\n${camp.url}` : baseText;
+    const text = encodeURIComponent(full);
     return {
       sms: `sms:?body=${text}`,
       whatsapp: `https://wa.me/?text=${text}`,
@@ -2338,6 +2439,19 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               arr.findIndex(x => x.userId === m.userId && x.child === m.child) === i
             );
 
+            // Map each userId (friends + me) to the set of circles they belong to.
+            // Used when rendering a row's red-letter circle-date markers, so a friend
+            // only sees dates from circles we actually share.
+            const userCircleMap = new Map();
+            activeCircles.forEach(c => {
+              c.members.forEach(m => {
+                if (!userCircleMap.has(m.userId)) userCircleMap.set(m.userId, new Set());
+                userCircleMap.get(m.userId).add(c.id);
+              });
+            });
+            // My own kids belong implicitly to all of my active circles (I'm the member)
+            const myCircleIds = new Set(activeCircles.map(c => c.id));
+
             // My kids rows come first
             const myKidRows = kids.map(k => ({ ...k, isMyKid: true }));
 
@@ -2619,7 +2733,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       if (!visibleWeeks || visibleWeeks.length === 0) return;
                       if (kids.length === 0) return;
 
-                      // Find the earliest enrolled camp across all kids that starts on/after today
+                      // Find the earliest camp to anchor the grid view. Priority:
+                      //  1) my kids' next enrolled camp
+                      //  2) any circle member's next enrolled camp (so brand-new
+                      //     users land near the action even before they have camps)
                       const todayIso = (() => {
                         const d = new Date();
                         const y = d.getFullYear();
@@ -2643,7 +2760,30 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         });
                       });
 
-                      if (!nextCampStart) return; // no upcoming enrolled camps; leave at default
+                      // Fallback: scan camps any circle member is enrolled in,
+                      // so new users with no camps of their own still land on
+                      // a useful week rather than "today."
+                      if (!nextCampStart && liveCircles && liveCircles.length > 0) {
+                        liveCircles.forEach(c => {
+                          (c.members || []).forEach(m => {
+                            const memberCampIds = m.camps || [];
+                            memberCampIds.forEach(cid => {
+                              const camp = allCampPool.find(c2 => c2.id === cid);
+                              if (!camp) return;
+                              const status = m.campStatus?.[cid] || 'enrolled';
+                              if (status !== 'enrolled') return;
+                              const end = camp.dateEnd || camp.dateStart;
+                              if (!camp.dateStart || !end) return;
+                              if (end < todayIso) return;
+                              if (!nextCampStart || camp.dateStart < nextCampStart) {
+                                nextCampStart = camp.dateStart;
+                              }
+                            });
+                          });
+                        });
+                      }
+
+                      if (!nextCampStart) return; // nothing upcoming anywhere; leave at default
 
                       // Compute the Monday of that camp, then step back one week
                       const campMonday = (() => {
@@ -2678,6 +2818,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         {visibleWeeks.map(w => {
                           const weekStart = new Date(w.num + "T00:00:00");
                           const holidays = getHolidaysInWeek(w.num);
+                          // All circle dates for this user — they're in all their own circles
+                          const weekCircleDates = getCircleDatesInWeek(w.num);
                           const dayLabels = ["M","T","W","Th","F"].map((day, i) => {
                             const dayDate = new Date(weekStart); dayDate.setDate(dayDate.getDate() + i);
                             const dayIso = dayDate.toISOString().slice(0, 10);
@@ -2688,7 +2830,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               return dayDate >= ds && dayDate <= de;
                             });
                             const holidayMatch = holidays.find(h => h.date === dayIso);
-                            return { day, importantMatch, holidayMatch };
+                            const circleDateMatch = weekCircleDates.find(cd => cd.date === dayIso);
+                            return { day, importantMatch, holidayMatch, circleDateMatch };
                           });
                           return (
                             <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, borderLeft: "1px solid #F0F0F0" }}>
@@ -2696,9 +2839,9 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 {w.dates}
                               </div>
                               <div style={{ display: "flex", borderTop: "1px solid #F0F0F0", paddingBottom: 6 }}>
-                                {dayLabels.map(({ day, importantMatch, holidayMatch }) => {
-                                  const tooltip = [holidayMatch?.name, importantMatch?.label].filter(Boolean).join(" · ");
-                                  const color = holidayMatch ? "#EF4444" : importantMatch ? "#F59E0B" : "#D1D5DB";
+                                {dayLabels.map(({ day, importantMatch, holidayMatch, circleDateMatch }) => {
+                                  const tooltip = [holidayMatch?.name, circleDateMatch?.name, importantMatch?.label].filter(Boolean).join(" · ");
+                                  const color = holidayMatch || circleDateMatch ? "#EF4444" : importantMatch ? "#F59E0B" : "#D1D5DB";
                                   return (
                                     <div key={day} style={{ flex: 1, textAlign: "center", paddingTop: 3, fontSize: 8.5, fontWeight: 700, color, cursor: tooltip ? "help" : "default" }}
                                       onMouseEnter={e => {
@@ -2751,8 +2894,17 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   ? importantDates.filter(d => d.kidId === person.id && d.dateStart && new Date(d.dateStart + "T12:00:00") <= weekEnd && new Date((d.dateEnd || d.dateStart) + "T12:00:00") >= weekStart)
                                   : [];
                                 const weekHolidays = getHolidaysInWeek(w.num);
+                                // Circle-level dates only apply on rows for people in that circle.
+                                // My own kids inherit all my circles; friend rows use the membership map.
+                                const personCircleIds = person.isMyKid
+                                  ? myCircleIds
+                                  : (userCircleMap.get(person.userId) || new Set());
+                                const weekCircleDates = personCircleIds.size > 0
+                                  ? getCircleDatesInWeek(w.num, personCircleIds)
+                                  : [];
                                 const dayImportant = {};
                                 const dayHoliday = {};
+                                const dayCircleDate = {};
                                 allDays.forEach((day, i) => {
                                   const dayDate = new Date(w.num + "T12:00:00"); dayDate.setDate(dayDate.getDate() + i);
                                   const dayIso = toLocalIso(dayDate);
@@ -2760,6 +2912,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   if (match) dayImportant[day] = match.label;
                                   const holiday = weekHolidays.find(h => h.date === dayIso);
                                   if (holiday) dayHoliday[day] = holiday.name;
+                                  const cd = weekCircleDates.find(x => x.date === dayIso);
+                                  if (cd) dayCircleDate[day] = cd.name;
                                 });
 
                                 // Helper to render a single camp chip
@@ -2781,7 +2935,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                       </div>
                                       <div style={{ display: "flex" }}>
                                         {allDays.map(d => (
-                                          <div key={d} style={{ flex: 1, textAlign: "center", padding: "2px 0", fontSize: 7, fontWeight: 700, color: (dayHoliday[d] || dayImportant[d]) ? "#EF4444" : campDays.includes(d) ? (isEnrolled ? "rgba(255,255,255,0.8)" : "#92400E") : (isEnrolled ? "rgba(255,255,255,0.25)" : "rgba(146,64,14,0.2)") }}>{d}</div>
+                                          <div key={d} style={{ flex: 1, textAlign: "center", padding: "2px 0", fontSize: 7, fontWeight: 700, color: (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) ? "#EF4444" : campDays.includes(d) ? (isEnrolled ? "rgba(255,255,255,0.8)" : "#92400E") : (isEnrolled ? "rgba(255,255,255,0.25)" : "rgba(146,64,14,0.2)") }}>{d}</div>
                                         ))}
                                       </div>
                                     </button>
@@ -2816,8 +2970,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                         </div>
                                         <div style={{ display: "flex" }}>
                                           {allDays.map(d => (
-                                            <div key={d} style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : "rgba(21,128,61,0.5)", cursor: (dayHoliday[d] || dayImportant[d]) ? "help" : "default" }}
-                                              onMouseEnter={e => (dayHoliday[d] || dayImportant[d]) && showTip(e, [dayHoliday[d], dayImportant[d]].filter(Boolean).join(" - "))}
+                                            <div key={d} style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : dayCircleDate[d] ? "#EF4444" : "rgba(21,128,61,0.5)", cursor: (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) ? "help" : "default" }}
+                                              onMouseEnter={e => (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) && showTip(e, [dayHoliday[d], dayCircleDate[d], dayImportant[d]].filter(Boolean).join(" - "))}
                                               onMouseLeave={hideTip}>{d}</div>
                                           ))}
                                         </div>
@@ -2833,14 +2987,25 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                           </div>
                                           <div style={{ display: "flex" }}>
                                             {allDays.map(d => (
-                                              <div key={d} style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : "#D1D5DB", cursor: (dayHoliday[d] || dayImportant[d]) ? "help" : "default" }}
-                                                onMouseEnter={e => (dayHoliday[d] || dayImportant[d]) && showTip(e, [dayHoliday[d], dayImportant[d]].filter(Boolean).join(" - "))}
+                                              <div key={d} style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : dayCircleDate[d] ? "#EF4444" : "#D1D5DB", cursor: (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) ? "help" : "default" }}
+                                                onMouseEnter={e => (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) && showTip(e, [dayHoliday[d], dayCircleDate[d], dayImportant[d]].filter(Boolean).join(" - "))}
                                                 onMouseLeave={hideTip}>{d}</div>
                                             ))}
                                           </div>
                                         </button>
                                       ) : (
-                                        <div style={{ width: "100%", borderRadius: 12, background: "transparent", border: "1.5px dashed #E5E7EB" }} />
+                                        // Friend's empty cell: no + button, but still render day
+                                        // letters so circle-date red-letter markers can appear.
+                                        <div style={{ width: "100%", height: "100%", borderRadius: 12, background: "transparent", border: "1.5px dashed #E5E7EB", display: "flex", flexDirection: "column" }}>
+                                          <div style={{ flex: 1 }} />
+                                          <div style={{ display: "flex", paddingBottom: 3 }}>
+                                            {allDays.map(d => (
+                                              <div key={d} style={{ flex: 1, textAlign: "center", padding: "3px 0", fontSize: 8.5, fontWeight: 700, color: dayHoliday[d] ? "#EF4444" : dayImportant[d] ? "#EF4444" : dayCircleDate[d] ? "#EF4444" : "#D1D5DB", cursor: (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) ? "help" : "default" }}
+                                                onMouseEnter={e => (dayHoliday[d] || dayImportant[d] || dayCircleDate[d]) && showTip(e, [dayHoliday[d], dayCircleDate[d], dayImportant[d]].filter(Boolean).join(" - "))}
+                                                onMouseLeave={hideTip}>{d}</div>
+                                            ))}
+                                          </div>
+                                        </div>
                                       )
                                     ) : (
                                       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -3399,6 +3564,40 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         {isExpanded && (
                           <div style={{ borderTop: "1px solid #F3F4F6", padding: "16px 16px 20px" }}>
 
+                            {/* Share this camp */}
+                            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12, position: "relative" }}>
+                              <button
+                                className="share-btn"
+                                onClick={e => { e.stopPropagation(); setShareCamp(sharecamp === camp.id ? null : camp.id); }}
+                                title="Share this camp"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                                </svg>
+                                Share
+                              </button>
+                              {sharecamp === camp.id && (() => {
+                                const links = getShareLinks(camp);
+                                return (
+                                  <div className="share-picker" onClick={e => e.stopPropagation()}>
+                                    <a className="share-option" href={links.sms}>
+                                      <span className="share-icon">💬</span> Text Message
+                                    </a>
+                                    <a className="share-option" href={links.whatsapp} target="_blank" rel="noreferrer">
+                                      <span className="share-icon">📱</span> WhatsApp
+                                    </a>
+                                    <a className="share-option" href={links.email}>
+                                      <span className="share-icon">✉️</span> Email
+                                    </a>
+                                    <button className="share-option" onClick={() => { handleNativeShare(camp); setShareCamp(null); }}>
+                                      <span className="share-icon">📋</span> {shareCopied ? "Copied!" : "Copy Link"}
+                                    </button>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+
                             {/* Full meta */}
                             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                               {camp.address && (
@@ -3619,7 +3818,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                             <div style={{flex:1}}>{lbl("Age/Grade Min")}<input style={inStyle} value={ef.ageMin||ef.gradeMin||""} onChange={e=>upd(ef.gradeMin?"gradeMin":"ageMin",e.target.value)} /></div>
                                             <div style={{flex:1}}>{lbl("Age/Grade Max")}<input style={inStyle} value={ef.ageMax||ef.gradeMax||""} onChange={e=>upd(ef.gradeMax?"gradeMax":"ageMax",e.target.value)} /></div>
                                           </div>
-                                          <div>{lbl("Location")}<input style={inStyle} value={ef.location||""} onChange={e=>upd("location",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
+                                          <div>{lbl("Neighborhood / City")}<input style={inStyle} value={ef.location||""} onChange={e=>upd("location",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
                                           <div>{lbl("Address")}<input style={inStyle} value={ef.address||""} onChange={e=>upd("address",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
                                           <div>{lbl("Website URL")}<input style={inStyle} value={ef.url||""} onChange={e=>upd("url",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
                                           <div style={{display:"flex",gap:8}}>
@@ -5105,6 +5304,155 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               </div>
                             );
                           })}
+
+                          {/* Circle-level important dates (shared across all members,
+                              e.g. first day of school). Any circle member can add/edit/delete. */}
+                          {(() => {
+                            const datesForCircle = circleDates
+                              .filter(cd => cd.circleId === circle.id)
+                              .sort((a, b) => (a.dateStart || '').localeCompare(b.dateStart || ''));
+                            const isAdding = circleDateCircleId === circle.id && circleDateEditId === null;
+                            const formatRange = (cd) => {
+                              const fmt = (iso) => {
+                                if (!iso) return '';
+                                const d = new Date(iso + 'T12:00:00');
+                                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                              };
+                              return cd.dateEnd && cd.dateEnd !== cd.dateStart
+                                ? `${fmt(cd.dateStart)} – ${fmt(cd.dateEnd)}`
+                                : fmt(cd.dateStart);
+                            };
+                            const resetForm = () => {
+                              setCircleDateCircleId(null); setCircleDateEditId(null);
+                              setCircleDateLabel(""); setCircleDateStart(""); setCircleDateEnd("");
+                            };
+                            const beginAdd = () => {
+                              resetForm();
+                              setCircleDateCircleId(circle.id);
+                              setCircleDateEditId(null);
+                            };
+                            const beginEdit = (cd) => {
+                              setCircleDateCircleId(circle.id);
+                              setCircleDateEditId(cd.id);
+                              setCircleDateLabel(cd.label || "");
+                              setCircleDateStart(cd.dateStart || "");
+                              setCircleDateEnd(cd.dateEnd || "");
+                            };
+                            const doSave = async () => {
+                              if (!circleDateLabel.trim() || !circleDateStart || circleDateSaving) return;
+                              setCircleDateSaving(true);
+                              try {
+                                if (circleDateEditId) {
+                                  // Update
+                                  await updateCircleDate(circleDateEditId, {
+                                    label: circleDateLabel.trim(),
+                                    dateStart: circleDateStart,
+                                    dateEnd: circleDateEnd || null,
+                                  });
+                                  setCircleDates(prev => prev.map(cd => cd.id === circleDateEditId
+                                    ? { ...cd, label: circleDateLabel.trim(), dateStart: circleDateStart, dateEnd: circleDateEnd || '' }
+                                    : cd
+                                  ));
+                                } else {
+                                  // Create
+                                  const created = await saveCircleDate(circle.id, userId, circleDateLabel.trim(), circleDateStart, circleDateEnd || null);
+                                  if (created) setCircleDates(prev => [...prev, created]);
+                                }
+                              } catch (e) {
+                                console.error('Failed to save circle date:', e);
+                                alert('Could not save date. Make sure the CircleDates table exists in Airtable with fields: Circle, Label, DateStart, DateEnd, CreatedBy.');
+                              } finally {
+                                setCircleDateSaving(false);
+                                resetForm();
+                              }
+                            };
+                            const doDelete = async (cd) => {
+                              if (!confirm(`Delete "${cd.label}"?`)) return;
+                              // Optimistic
+                              setCircleDates(prev => prev.filter(x => x.id !== cd.id));
+                              try { await deleteCircleDate(cd.id); }
+                              catch (e) {
+                                console.error('Failed to delete:', e);
+                                // Roll back
+                                setCircleDates(prev => [...prev, cd]);
+                                alert('Could not delete that date.');
+                              }
+                            };
+                            return (
+                              <div style={{ marginTop: 10, paddingTop: 14, borderTop: "1px solid #F0F0F0" }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.6px" }}>
+                                    Important dates
+                                  </div>
+                                  {!isAdding && circleDateEditId === null && (
+                                    <button onClick={e => { e.stopPropagation(); beginAdd(); }}
+                                      style={{ background: "none", border: "1px dashed #D1D5DB", borderRadius: 6, padding: "3px 9px", fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600, color: "#6B7280", cursor: "pointer" }}
+                                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#3D6B1F"; e.currentTarget.style.color = "#3D6B1F"; }}
+                                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#D1D5DB"; e.currentTarget.style.color = "#6B7280"; }}>
+                                      + Add date
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* List of dates */}
+                                {datesForCircle.length === 0 && !isAdding && circleDateEditId === null && (
+                                  <div style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic", padding: "2px 0 4px" }}>
+                                    No dates yet. Add things like the first day of school, school breaks, or holidays this circle shares.
+                                  </div>
+                                )}
+                                {datesForCircle.map(cd => {
+                                  const editing = circleDateCircleId === circle.id && circleDateEditId === cd.id;
+                                  if (editing) return null; // rendered in the form below
+                                  return (
+                                    <div key={cd.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "5px 0" }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#EF4444", flexShrink: 0 }} />
+                                        <span style={{ fontSize: 13, fontWeight: 600, color: "#1F2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cd.label}</span>
+                                        <span style={{ fontSize: 12, color: "#9CA3AF", flexShrink: 0 }}>{formatRange(cd)}</span>
+                                      </div>
+                                      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                                        <button onClick={e => { e.stopPropagation(); beginEdit(cd); }}
+                                          style={{ background: "none", border: "none", padding: "3px 6px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "#6B7280" }}>Edit</button>
+                                        <button onClick={e => { e.stopPropagation(); doDelete(cd); }}
+                                          style={{ background: "none", border: "none", padding: "3px 6px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "#DC2626" }}>Delete</button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+
+                                {/* Add/edit form */}
+                                {circleDateCircleId === circle.id && (isAdding || circleDateEditId !== null) && (
+                                  <div style={{ marginTop: 8, padding: 10, background: "#F9FAFB", borderRadius: 8, border: "1px solid #E5E7EB" }} onClick={e => e.stopPropagation()}>
+                                    <input autoFocus placeholder="Label (e.g. First day of school)" value={circleDateLabel}
+                                      onChange={e => setCircleDateLabel(e.target.value)}
+                                      style={{ width: "100%", padding: "7px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none", marginBottom: 8 }} />
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                                      <div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>Start date</div>
+                                        <input type="date" value={circleDateStart} onChange={e => setCircleDateStart(e.target.value)}
+                                          style={{ width: "100%", padding: "7px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none" }} />
+                                      </div>
+                                      <div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>End date (optional)</div>
+                                        <input type="date" value={circleDateEnd} onChange={e => setCircleDateEnd(e.target.value)}
+                                          style={{ width: "100%", padding: "7px 10px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none" }} />
+                                      </div>
+                                    </div>
+                                    <div style={{ display: "flex", gap: 8 }}>
+                                      <button disabled={!circleDateLabel.trim() || !circleDateStart || circleDateSaving}
+                                        onClick={doSave}
+                                        style={{ background: "#3D6B1F", border: "none", borderRadius: 7, padding: "7px 16px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer", opacity: (circleDateLabel.trim() && circleDateStart && !circleDateSaving) ? 1 : 0.4 }}>
+                                        {circleDateSaving ? "Saving..." : (circleDateEditId ? "Save" : "Add")}
+                                      </button>
+                                      <button onClick={resetForm}
+                                        style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "7px 14px", fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 500, color: "#6B7280", cursor: "pointer" }}>Cancel</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+
                           {/* Invite row */}
                           {inviteCircleId === circle.id && (
                             <div className="invite-form">

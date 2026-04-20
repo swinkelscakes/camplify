@@ -534,6 +534,65 @@ export const deleteImportantDate = async (dateId) => {
   await base('ImportantDates').destroy(dateId);
 };
 
+// ── Circle-level important dates (shared across all members of a circle,
+// e.g. "First day of school") ─────────────────────────────────────────
+
+// Load all circle dates for a list of circle IDs
+export const getCircleDates = async (circleIds) => {
+  if (!circleIds || circleIds.length === 0) return [];
+  try {
+    const records = await base('CircleDates').select().all();
+    const idSet = new Set(circleIds);
+    return records
+      .filter(r => r.fields.Circle && idSet.has(r.fields.Circle[0]))
+      .map(r => ({
+        id: r.id,
+        circleId: r.fields.Circle[0],
+        label: r.fields.Label || '',
+        dateStart: r.fields.DateStart || '',
+        dateEnd: r.fields.DateEnd || '',
+        createdBy: r.fields.CreatedBy || '',
+      }));
+  } catch (e) {
+    console.error('Error loading circle dates:', e);
+    return [];
+  }
+};
+
+// Save a new circle date
+export const saveCircleDate = async (circleId, userId, label, dateStart, dateEnd) => {
+  const record = await base('CircleDates').create({
+    Circle: [circleId],
+    Label: label,
+    DateStart: dateStart || null,
+    DateEnd: dateEnd || null,
+    CreatedBy: userId || '',
+  });
+  return {
+    id: record.id,
+    circleId,
+    label: record.fields.Label || '',
+    dateStart: record.fields.DateStart || '',
+    dateEnd: record.fields.DateEnd || '',
+    createdBy: record.fields.CreatedBy || '',
+  };
+};
+
+// Update an existing circle date
+export const updateCircleDate = async (dateId, fields) => {
+  const airtableFields = {};
+  if (fields.label !== undefined) airtableFields.Label = fields.label;
+  if (fields.dateStart !== undefined) airtableFields.DateStart = fields.dateStart || null;
+  if (fields.dateEnd !== undefined) airtableFields.DateEnd = fields.dateEnd || null;
+  await base('CircleDates').update(dateId, airtableFields);
+};
+
+// Delete a circle date
+export const deleteCircleDate = async (dateId) => {
+  await base('CircleDates').destroy(dateId);
+};
+
+
 // Fetch a single circle by invite code for public preview (no auth required).
 // Returns the same shape as getCircles() entries so the read-only grid can
 // reuse existing rendering logic. Returns null if the code doesn't match.
@@ -766,8 +825,20 @@ export const deleteAccount = async (userId) => {
       await destroyBatched('CircleMembers', myMemberships.map(r => r.id));
     }
 
-    // 7) Delete the now-orphan circles
-    if (circlesToDelete.length > 0) await destroyBatched('Circles', circlesToDelete);
+    // 7) Delete the now-orphan circles (and any CircleDates attached to them)
+    if (circlesToDelete.length > 0) {
+      try {
+        const circleDateRecords = await base('CircleDates').select().all().catch(() => []);
+        const orphanCircleSet = new Set(circlesToDelete);
+        const orphanDateIds = circleDateRecords
+          .filter(r => r.fields.Circle && orphanCircleSet.has(r.fields.Circle[0]))
+          .map(r => r.id);
+        if (orphanDateIds.length > 0) await destroyBatched('CircleDates', orphanDateIds);
+      } catch (e) {
+        console.warn('Failed to clean up CircleDates for orphan circles:', e);
+      }
+      await destroyBatched('Circles', circlesToDelete);
+    }
 
     // 8) Finally, delete the kids themselves
     if (myKids.length > 0) await destroyBatched('Kids', myKids.map(r => r.id));
