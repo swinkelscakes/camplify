@@ -724,6 +724,8 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [discoverableCircles, setDiscoverableCircles] = useState([]);
   const [discoverLoaded, setDiscoverLoaded] = useState(false);
   const [discoverLoading, setDiscoverLoading] = useState(false);
+  // Which suggested circle card is expanded (showing the list of friends in it)
+  const [expandedSuggestedId, setExpandedSuggestedId] = useState(null);
   // Lazy-fetch discoverable circles the first time the Circles tab is
   // activated, and again when the user creates/joins a circle (which flips
   // discoverLoaded back to false).
@@ -5777,8 +5779,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 {/* ── Suggested circles: public circles your circle-mates are in ── */}
                 {(discoverLoading || discoverableCircles.length > 0) && (
                   <div style={{ marginTop: 24 }}>
-                    <h2 className="section-title" style={{ fontSize: 18, marginBottom: 4 }}>Suggested for you</h2>
-                    <p className="section-sub" style={{ marginBottom: 14 }}>Circles your friends are in — ask for the invite code to join.</p>
+                    <h2 className="section-title" style={{ fontSize: 18, marginBottom: 14 }}>Suggested for you</h2>
                     {discoverLoading && discoverableCircles.length === 0 && (
                       <div style={{ fontSize: 13, color: "#9CA3AF", fontStyle: "italic" }}>Looking for circles your friends are in…</div>
                     )}
@@ -5794,36 +5795,64 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         const hint = shown.length === 0
                           ? `${sc.knownMembers.length} of your friends ${sc.knownMembers.length === 1 ? "is" : "are"} in this`
                           : shown.join(" and ") + (extra > 0 ? ` · +${extra} more` : "");
+                        const isOpen = expandedSuggestedId === sc.id;
+                        // De-dupe friends by userId so one person doesn't show up per-kid.
+                        // Prefer the entry with a parentName when multiple exist for the same userId.
+                        const friendsByUser = new Map();
+                        sc.knownMembers.forEach(m => {
+                          const key = m.userId || `${m.parentName}|${m.childName}`;
+                          const existing = friendsByUser.get(key);
+                          if (!existing || (!existing.parentName && m.parentName)) {
+                            friendsByUser.set(key, m);
+                          }
+                        });
+                        const friendsList = Array.from(friendsByUser.values());
                         return (
-                          <div key={sc.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "white", border: "1px solid #E5E7EB", borderRadius: 12 }}>
-                            <div style={{
-                              width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-                              background: (sc.color || "#3D6B1F") + "22",
-                            }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 14, fontWeight: 700, color: "#1F2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.name}</div>
-                              <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {hint} · {sc.memberCount} {sc.memberCount === 1 ? "family" : "families"}
+                          <div key={sc.id} style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
+                            <div
+                              onClick={() => setExpandedSuggestedId(isOpen ? null : sc.id)}
+                              style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", cursor: "pointer", transition: "background 0.12s" }}
+                              onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"}
+                              onMouseLeave={e => e.currentTarget.style.background = "white"}
+                            >
+                              <div style={{
+                                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                                background: (sc.color || "#3D6B1F") + "22",
+                              }} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: "#1F2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.name}</div>
+                                <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {hint} · {sc.memberCount} {sc.memberCount === 1 ? "family" : "families"}
+                                </div>
                               </div>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                                style={{ flexShrink: 0, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
+                                <polyline points="6 9 12 15 18 9"/>
+                              </svg>
                             </div>
-                            <button
-                              onClick={() => {
-                                // Prefill the join-by-code form and scroll to it so the user
-                                // can paste/get the invite code from a friend.
-                                setJoinCode("");
-                                setJoinError(`Ask a member for the invite code for "${sc.name}"`);
-                                const el = document.querySelector('input[placeholder*="invite code"]');
-                                if (el) { el.focus(); el.scrollIntoView({ behavior: "smooth", block: "center" }); }
-                              }}
-                              style={{
-                                background: "white", border: "1.5px solid #3D6B1F", borderRadius: 8,
-                                padding: "6px 14px", fontFamily: "Inter, sans-serif",
-                                fontSize: 12.5, fontWeight: 700, color: "#3D6B1F", cursor: "pointer",
-                                whiteSpace: "nowrap", flexShrink: 0,
-                              }}
-                              onMouseEnter={e => { e.currentTarget.style.background = "#eef5e8"; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = "white"; }}
-                            >Request code</button>
+                            {isOpen && (
+                              <div style={{ padding: "4px 14px 14px", borderTop: "1px solid #F3F4F6" }}>
+                                <div style={{ fontSize: 11.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", margin: "10px 0 8px" }}>
+                                  Ask one of your friends for the invite code
+                                </div>
+                                {friendsList.map(m => {
+                                  const name = m.parentName || m.childName || "A friend";
+                                  const sub = m.parentName && m.childName ? `Parent of ${m.childName}` : "";
+                                  const initial = (m.childName || m.parentName || "?")[0]?.toUpperCase() || "?";
+                                  return (
+                                    <div key={m.userId || name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+                                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#eef5e8", color: "#3D6B1F", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+                                        {initial}
+                                      </div>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 13, fontWeight: 600, color: "#1F2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                                        {sub && <div style={{ fontSize: 11.5, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
