@@ -420,14 +420,16 @@ export const getCircles = async (userId) => {
   }
 };
 
-// Create a new circle
-export const createCircle = async (userId, name, color) => {
+// Create a new circle. `isPrivate` defaults to false — private circles
+// don't appear in discovery but can still be joined by invite code.
+export const createCircle = async (userId, name, color, isPrivate) => {
   const inviteCode = generateCode();
   const record = await base('Circles').create({
     Name: name,
     Color: color || '#3D6B1F',
     CreatedBy: userId,
     InviteCode: inviteCode,
+    Private: !!isPrivate,
   });
   return {
     id: record.id,
@@ -435,6 +437,7 @@ export const createCircle = async (userId, name, color) => {
     color: record.fields.Color,
     inviteCode: record.fields.InviteCode,
     createdBy: record.fields.CreatedBy,
+    private: !!record.fields.Private,
     members: [],
   };
 };
@@ -677,6 +680,78 @@ export const getCirclePublic = async (inviteCode) => {
   } catch (e) {
     console.error('Error loading public circle:', e);
     return null;
+  }
+};
+
+// Discover public circles that friends-of-friends are in, suggesting ones
+// the current user isn't already a member of.
+// "Friends" = everyone who shares at least one circle with the current user.
+// A suggested circle is any PUBLIC circle with at least one of those friends
+// as a member, excluding circles the user is already in.
+// Returns:
+//   [{ id, name, color, inviteCode, memberCount,
+//      knownMembers: [{ userId, parentName, childName }] }]
+export const getDiscoverableCircles = async (userId) => {
+  if (!userId) return [];
+  try {
+    const [allCircles, allMembers] = await Promise.all([
+      base('Circles').select().all(),
+      base('CircleMembers').select().all(),
+    ]);
+
+    // Which circles is the current user already in?
+    const myCircleIds = new Set(
+      allMembers
+        .filter(m => m.fields.UserId === userId)
+        .flatMap(m => m.fields.Circle || [])
+    );
+
+    // Who are the user's "circle friends" — other userIds sharing any of my circles?
+    const friendUserIds = new Set();
+    allMembers.forEach(m => {
+      const uid = m.fields.UserId;
+      if (!uid || uid === userId) return;
+      const circles = m.fields.Circle || [];
+      if (circles.some(cid => myCircleIds.has(cid))) friendUserIds.add(uid);
+    });
+
+    // For each PUBLIC circle the user isn't already in, collect friend members.
+    // Skip circles with no friends of the user, and skip private circles.
+    const results = [];
+    allCircles.forEach(c => {
+      if (c.fields.Private) return; // respect privacy flag
+      if (myCircleIds.has(c.id)) return; // already in it
+      const circleMembers = allMembers.filter(m => (m.fields.Circle || []).includes(c.id));
+      const knownMembers = circleMembers
+        .filter(m => friendUserIds.has(m.fields.UserId))
+        .map(m => ({
+          userId: m.fields.UserId || '',
+          parentName: m.fields.ParentName || '',
+          childName: m.fields.ChildName || '',
+        }));
+      if (knownMembers.length === 0) return;
+      results.push({
+        id: c.id,
+        name: c.fields.Name || '',
+        color: c.fields.Color || '#3D6B1F',
+        inviteCode: c.fields.InviteCode || '',
+        memberCount: circleMembers.length,
+        knownMembers,
+      });
+    });
+
+    // Sort: most known-friends first, then biggest circles
+    results.sort((a, b) => {
+      if (b.knownMembers.length !== a.knownMembers.length) {
+        return b.knownMembers.length - a.knownMembers.length;
+      }
+      return b.memberCount - a.memberCount;
+    });
+
+    return results;
+  } catch (e) {
+    console.error('Error loading discoverable circles:', e);
+    return [];
   }
 };
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -718,6 +718,25 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   });
   const [showAddCircle, setShowAddCircle] = useState(false);
   const [newCircleName, setNewCircleName] = useState("");
+  const [newCirclePrivate, setNewCirclePrivate] = useState(false);
+  // Discoverable circles: public circles that my circle-mates are in.
+  // Fetched lazily when the Circles tab is first opened.
+  const [discoverableCircles, setDiscoverableCircles] = useState([]);
+  const [discoverLoaded, setDiscoverLoaded] = useState(false);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  // Lazy-fetch discoverable circles the first time the Circles tab is
+  // activated, and again when the user creates/joins a circle (which flips
+  // discoverLoaded back to false).
+  useEffect(() => {
+    if (activeTab !== "circles") return;
+    if (discoverLoaded) return;
+    if (!userId) return;
+    setDiscoverLoading(true);
+    getDiscoverableCircles(userId)
+      .then(list => { setDiscoverableCircles(list); setDiscoverLoaded(true); })
+      .catch(err => { console.warn('Discovery failed:', err); setDiscoverLoaded(true); })
+      .finally(() => setDiscoverLoading(false));
+  }, [activeTab, discoverLoaded, userId, airtableCircles.length]);
   const [expandedMember, setExpandedMember] = useState(null);
   const [selectedKids, setSelectedKids] = useState(new Set());
   const [inviteCircleId, setInviteCircleId] = useState(null);
@@ -1900,12 +1919,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
         }
         .add-circle-btn:hover { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo); }
         .add-circle-form { background: var(--white); border-radius: var(--radius-xl); padding: 18px; border: 1px solid var(--gray-200); }
-        .add-circle-form input {
+        .add-circle-form input[type="text"],
+        .add-circle-form input:not([type]) {
           width: 100%; padding: 9px 13px; border: 1px solid var(--gray-200);
           border-radius: var(--radius); font-family: 'Inter', sans-serif;
           font-size: 14px; color: var(--gray-900); outline: none; margin-bottom: 10px; background: var(--white);
         }
-        .add-circle-form input:focus { border-color: var(--indigo); }
+        .add-circle-form input[type="text"]:focus,
+        .add-circle-form input:not([type]):focus { border-color: var(--indigo); }
         .form-btns { display: flex; gap: 8px; }
 
         .btn-primary {
@@ -5628,13 +5649,26 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         </div>
                       </div>
                     )}
+                    {/* Private toggle — keeps the circle out of discovery.
+                        Invite code still works, so anyone with the link can join. */}
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16, cursor: "pointer", padding: "10px 12px", background: "#F9FAFB", borderRadius: 8, border: "1px solid #E5E7EB" }}>
+                      <input type="checkbox" checked={newCirclePrivate}
+                        onChange={e => setNewCirclePrivate(e.target.checked)}
+                        style={{ marginTop: 2, accentColor: "#3D6B1F", cursor: "pointer", flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#1F2937" }}>Keep private</div>
+                        <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
+                          Hide this circle from suggestions. Friends can still join with the invite code.
+                        </div>
+                      </div>
+                    </label>
                     <div className="form-btns">
                       <button
                         className="btn-primary"
                         style={{ background: "#3D6B1F" }}
                         disabled={!newCircleName.trim()}
                         onClick={async () => {
-                          const newCircle = await createCircle(userId, newCircleName.trim(), "#3D6B1F");
+                          const newCircle = await createCircle(userId, newCircleName.trim(), "#3D6B1F", newCirclePrivate);
                           // Add creator as member for each selected kid
                           const selectedKidsList = kids.filter(k => circleKidIds.has(k.id));
                           const kidsToAdd = selectedKidsList.length > 0 ? selectedKidsList : kids.slice(0, 1);
@@ -5646,12 +5680,17 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           setAirtableCircles(updated);
                           setShowAddCircle(false);
                           setNewCircleName("");
+                          setNewCirclePrivate(false);
                           setCircleKidIds(new Set());
+                          // Refresh discovery — a circle the user just created shouldn't
+                          // appear as a suggestion to them, and membership changes can
+                          // affect friend-of-friend links for others.
+                          setDiscoverLoaded(false);
                         }}
                       >
                         Create Circle
                       </button>
-                      <button className="btn-ghost" onClick={() => { setShowAddCircle(false); setCircleKidIds(new Set()); }}>
+                      <button className="btn-ghost" onClick={() => { setShowAddCircle(false); setCircleKidIds(new Set()); setNewCirclePrivate(false); }}>
                         Cancel
                       </button>
                     </div>
@@ -5734,6 +5773,63 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     </div>
                   );
                 })()}
+
+                {/* ── Suggested circles: public circles your circle-mates are in ── */}
+                {(discoverLoading || discoverableCircles.length > 0) && (
+                  <div style={{ marginTop: 24 }}>
+                    <h2 className="section-title" style={{ fontSize: 18, marginBottom: 4 }}>Suggested for you</h2>
+                    <p className="section-sub" style={{ marginBottom: 14 }}>Circles your friends are in — ask for the invite code to join.</p>
+                    {discoverLoading && discoverableCircles.length === 0 && (
+                      <div style={{ fontSize: 13, color: "#9CA3AF", fontStyle: "italic" }}>Looking for circles your friends are in…</div>
+                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {discoverableCircles.map(sc => {
+                        // Format the "known members" hint: "Quinn S. and Liam L. · +3 more"
+                        const displayNames = sc.knownMembers
+                          .map(m => m.parentName || m.childName || "A friend")
+                          .filter(Boolean);
+                        const uniqueNames = Array.from(new Set(displayNames));
+                        const shown = uniqueNames.slice(0, 2);
+                        const extra = Math.max(0, uniqueNames.length - shown.length);
+                        const hint = shown.length === 0
+                          ? `${sc.knownMembers.length} of your friends ${sc.knownMembers.length === 1 ? "is" : "are"} in this`
+                          : shown.join(" and ") + (extra > 0 ? ` · +${extra} more` : "");
+                        return (
+                          <div key={sc.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "white", border: "1px solid #E5E7EB", borderRadius: 12 }}>
+                            <div style={{
+                              width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                              background: (sc.color || "#3D6B1F") + "22",
+                            }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: "#1F2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.name}</div>
+                              <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {hint} · {sc.memberCount} {sc.memberCount === 1 ? "family" : "families"}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                // Prefill the join-by-code form and scroll to it so the user
+                                // can paste/get the invite code from a friend.
+                                setJoinCode("");
+                                setJoinError(`Ask a member for the invite code for "${sc.name}"`);
+                                const el = document.querySelector('input[placeholder*="invite code"]');
+                                if (el) { el.focus(); el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+                              }}
+                              style={{
+                                background: "white", border: "1.5px solid #3D6B1F", borderRadius: 8,
+                                padding: "6px 14px", fontFamily: "Inter, sans-serif",
+                                fontSize: 12.5, fontWeight: 700, color: "#3D6B1F", cursor: "pointer",
+                                whiteSpace: "nowrap", flexShrink: 0,
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = "#eef5e8"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "white"; }}
+                            >Request code</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )}
