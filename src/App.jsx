@@ -655,6 +655,9 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const clerkInstance = useClerk();
   // Header avatar dropdown (contains Sign out). Null = closed.
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  // Kids whose stale-age reminder was dismissed this session. Session-only:
+  // on next full reload the reminder will surface again if still stale.
+  const [ageReminderDismissed, setAgeReminderDismissed] = useState(new Set());
   // Circle-level date editor state (shared across circles — only one open at a time)
   const [circleDateCircleId, setCircleDateCircleId] = useState(null); // which circle is editing
   const [circleDateEditId, setCircleDateEditId] = useState(null); // which existing date is being edited (null = adding new)
@@ -663,19 +666,24 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [circleDateEnd, setCircleDateEnd] = useState("");
   const [circleDateSaving, setCircleDateSaving] = useState(false);
   const didAutoJoinRef = useRef(false);
+  const joinedCircleNameRef = useRef(null); // remembers name across effects for the wizard
+  // Effect 1: join the circle as soon as we have a userId and an invite code.
+  // Runs BEFORE the user adds their first kid so the Circles tab doesn't
+  // sit there showing a "paste the code" form on a brand-new account.
   useEffect(() => {
     if (didAutoJoinRef.current) return;
     if (!pendingInviteCode) return;
     if (loading) return;
-    if (airtableKids.length === 0) return;
-    const firstKid = airtableKids[0];
+    if (!userId) return;
     didAutoJoinRef.current = true;
     (async () => {
-      let joinedCircleName = "your circle";
       try {
-        const result = await joinCircleByCode(userId, userName || "", firstKid.name || "", pendingInviteCode);
+        // We don't have a kid name yet (this fires before kid onboarding).
+        // Membership row is created with empty ChildName; the onboarding
+        // wizard later calls updateCircleMemberKid to fill it in.
+        const result = await joinCircleByCode(userId, userName || "", "", pendingInviteCode);
         if (result && !result.error) {
-          joinedCircleName = result.name || joinedCircleName;
+          joinedCircleNameRef.current = result.name || "your circle";
           setAirtableCircles(prev => {
             const existing = prev.find(c => c.id === result.id);
             return existing ? prev.map(c => c.id === result.id ? result : c) : [...prev, result];
@@ -686,10 +694,21 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       } finally {
         try { window.sessionStorage.removeItem("camplify_invite_code"); } catch {}
       }
-      // Kick off the onboarding wizard for this new invite-joined user.
-      setOnboardingWizard({ step: 0, kidId: firstKid.id, circleName: joinedCircleName });
     })();
-  }, [pendingInviteCode, loading, airtableKids, userId, userName]);
+  }, [pendingInviteCode, loading, userId, userName]);
+
+  // Effect 2: once the invite-joined user adds their first kid, open the
+  // onboarding wizard so they can fill in parent name, age, interests, etc.
+  const didOpenWizardRef = useRef(false);
+  useEffect(() => {
+    if (didOpenWizardRef.current) return;
+    if (!pendingInviteCode) return; // only fires for invite-joined users
+    if (loading) return;
+    if (airtableKids.length === 0) return;
+    didOpenWizardRef.current = true;
+    const firstKid = airtableKids[0];
+    setOnboardingWizard({ step: 0, kidId: firstKid.id, circleName: joinedCircleNameRef.current || "your circle" });
+  }, [pendingInviteCode, loading, airtableKids]);
   const [selectedWeek, setSelectedWeek] = useState(3);
   const [selectedCircles, setSelectedCircles] = useState(new Set()); // empty = all
   const toggleCircle = (id) => setSelectedCircles(prev => {
@@ -1186,6 +1205,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [profileKidId, setProfileKidId] = useState(null);
   const updateKidProfile = (kidId, field, val) => {
     setKidProfiles(prev => ({ ...prev, [kidId]: { ...prev[kidId], [field]: val } }));
+    if (field === "age") {
+      // Mirror airtable's auto-stamp of AgeSetDate in our local kids state
+      // so "last confirmed" calculations update without a refetch
+      const todayIso = new Date().toISOString().slice(0, 10);
+      setAirtableKids(prev => prev.map(k => k.id === kidId ? { ...k, age: val, ageSetDate: todayIso } : k));
+    }
     if (field === "interests") {
       // Save immediately for interests - each click is discrete
       const interests = val instanceof Set ? Array.from(val) : val;
@@ -4786,6 +4811,74 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
             return (
               <div>
+                {/* Stale-age reminder banner. For each kid whose age was last
+                    set > 12 months ago (or never), prompt to confirm. Two
+                    actions: "Still N" (re-stamps today's date, same age) and
+                    "Update" (opens the age editor). Dismiss = session-only. */}
+                {(() => {
+                  const MS_YEAR = 365 * 24 * 60 * 60 * 1000;
+                  const now = Date.now();
+                  const stale = kids.filter(k => {
+                    if (ageReminderDismissed.has(k.id)) return false;
+                    if (!k.age) return false; // no age set → handled by the profile form prompt
+                    if (!k.ageSetDate) return true; // has age, never stamped → ask to confirm
+                    const set = new Date(String(k.ageSetDate).slice(0, 10) + "T12:00:00");
+                    if (isNaN(set.getTime())) return true;
+                    return (now - set.getTime()) > MS_YEAR;
+                  });
+                  if (stale.length === 0) return null;
+                  const kidToShow = stale[0]; // one banner at a time
+                  const monthsAgo = (() => {
+                    if (!kidToShow.ageSetDate) return null;
+                    const set = new Date(String(kidToShow.ageSetDate).slice(0, 10) + "T12:00:00");
+                    if (isNaN(set.getTime())) return null;
+                    return Math.round((now - set.getTime()) / (30 * 24 * 60 * 60 * 1000));
+                  })();
+                  const firstName = kidToShow.name.split(" ")[0];
+                  const confirmStillSame = async () => {
+                    const todayIso = new Date().toISOString().slice(0, 10);
+                    setAirtableKids(prev => prev.map(k => k.id === kidToShow.id ? { ...k, ageSetDate: todayIso } : k));
+                    // Just stamp the date; don't bump age
+                    updateKid(kidToShow.id, { ageSetDate: todayIso }).catch(console.error);
+                  };
+                  const openAgeEditor = () => {
+                    setProfileKidId(kidToShow.id);
+                    // Scroll to age section — the profile view shows age right up top
+                    setTimeout(() => {
+                      const el = document.getElementById("age-section");
+                      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }, 100);
+                  };
+                  return (
+                    <div style={{ background: "#FEF3C7", border: "1.5px solid #FDE68A", borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 20, flexShrink: 0 }}>🎂</div>
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: "#78350F" }}>
+                          Is {firstName} still {kidToShow.age}?
+                        </div>
+                        <div style={{ fontSize: 12, color: "#92400E", marginTop: 2 }}>
+                          {monthsAgo ? `Last confirmed ${monthsAgo} months ago.` : "Never confirmed."} A quick check keeps camp recommendations accurate.
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button onClick={confirmStillSame}
+                          style={{ background: "#3D6B1F", border: "none", borderRadius: 8, padding: "7px 14px", fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 700, color: "white", cursor: "pointer", whiteSpace: "nowrap" }}>
+                          Still {kidToShow.age}
+                        </button>
+                        <button onClick={openAgeEditor}
+                          style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: 8, padding: "7px 14px", fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600, color: "#374151", cursor: "pointer", whiteSpace: "nowrap" }}>
+                          Update
+                        </button>
+                        <button onClick={() => setAgeReminderDismissed(prev => { const n = new Set(prev); n.add(kidToShow.id); return n; })}
+                          title="Dismiss"
+                          style={{ background: "none", border: "none", padding: "4px 8px", cursor: "pointer", color: "#92400E", fontSize: 18, lineHeight: 1 }}>
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Kid switcher + add kid */}
                 <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
                   {kids.map(k => (
@@ -4944,7 +5037,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                      <div>
+                      <div id="age-section">
                         <label style={{ fontSize: 11.5, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: 6 }}>Age</label>
                         <select
                           value={profile.age}

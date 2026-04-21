@@ -98,6 +98,7 @@ export const getKids = async (userId) => {
       name,
       initials,
       age: f.Age || '',
+      ageSetDate: f.AgeSetDate || '',
       interests: (f.Interests || []).map(i => i.toLowerCase()),
       zipcode: f.Zipcode || '',
       visible: f.Visible || false,
@@ -118,6 +119,7 @@ export const saveKid = async (userId, name, initials) => {
     name: record.fields.Name || '',
     initials: record.fields.Initials || '',
     age: '',
+    ageSetDate: '',
     interests: [],
     zipcode: '',
     visible: false,
@@ -129,7 +131,16 @@ export const saveKid = async (userId, name, initials) => {
 export const updateKid = async (kidId, fields) => {
   const airtableFields = {};
   if (fields.name !== undefined) airtableFields.Name = fields.name;
-  if (fields.age !== undefined) airtableFields.Age = fields.age ? Number(fields.age) : null;
+  if (fields.age !== undefined) {
+    airtableFields.Age = fields.age ? Number(fields.age) : null;
+    // Auto-stamp AgeSetDate whenever age is saved (unless the caller
+    // explicitly passes ageSetDate too, which wins below)
+    const todayIso = new Date().toISOString().slice(0, 10);
+    airtableFields.AgeSetDate = todayIso;
+  }
+  if (fields.ageSetDate !== undefined) {
+    airtableFields.AgeSetDate = fields.ageSetDate || null;
+  }
   if (fields.initials !== undefined) airtableFields.Initials = fields.initials;
   if (fields.interests !== undefined) airtableFields.Interests = Array.from(fields.interests).map(i => i === 'stem' ? 'STEM' : i.charAt(0).toUpperCase() + i.slice(1));
   if (fields.zipcode !== undefined) airtableFields.Zipcode = fields.zipcode;
