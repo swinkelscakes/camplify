@@ -1214,6 +1214,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [friendProfilePopover, setFriendProfilePopover] = useState(null); // { person, x, y }
   const [campTypeFilter, setCampTypeFilter] = useState(new Set());
   const [campSort, setCampSort] = useState("date");
+  // Camps tab filter: "" = any age/grade; "age:N" = kids age N years;
+  // "grade:K"|"grade:1".."grade:12" = by grade. Matches camps whose
+  // age/grade bounds cover the chosen value (with age↔grade fallback).
+  const [ageGradeFilter, setAgeGradeFilter] = useState("");
   const [focusedCampId, setFocusedCampId] = useState(null);
   const [expandedCampId, setExpandedCampId] = useState(null);
   const [campStatusPicker, setCampStatusPicker] = useState(null); // { campId, kidId }
@@ -3487,8 +3491,65 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             const allTypes = Object.keys(TYPE_CONFIG).filter(t => allCampPool.some(c => Array.isArray(c.campType) ? c.campType.includes(t) : c.campType === t));
 
+            // Age/grade filter: parse selection and match against camp bounds.
+            // Grade scale: K=0, 1st=1, ..., 12th=12. Approx mapping: age = grade + 5
+            // (so grade K ≈ age 5, 1st ≈ 6, etc.) — used as a soft fallback when
+            // a camp only declares one axis (grade bounds only, or age bounds only).
+            const gradeToOrdinal = (g) => {
+              if (g == null || g === "") return null;
+              const s = String(g).trim().toUpperCase();
+              if (s === "K" || s === "K" || s === "KINDER" || s === "KINDERGARTEN") return 0;
+              if (s === "PK" || s === "PRE-K" || s === "PREK") return -1;
+              if (s === "TK") return -1;
+              const n = parseInt(s, 10);
+              return isNaN(n) ? null : n;
+            };
+            const matchesAgeGrade = (camp) => {
+              if (!ageGradeFilter) return true;
+              const [axis, valStr] = ageGradeFilter.split(":");
+              if (axis === "age") {
+                const age = parseInt(valStr, 10);
+                if (isNaN(age)) return true;
+                // Primary: age bounds on camp
+                const hasAge = camp.ageMin != null || camp.ageMax != null;
+                if (hasAge) {
+                  if (camp.ageMin != null && age < Number(camp.ageMin)) return false;
+                  if (camp.ageMax != null && age > Number(camp.ageMax)) return false;
+                  return true;
+                }
+                // Fallback: map chosen age → approx grade, then check grade bounds
+                const gr = age - 5;
+                const gMin = gradeToOrdinal(camp.gradeMin);
+                const gMax = gradeToOrdinal(camp.gradeMax);
+                if (gMin == null && gMax == null) return false; // no info → exclude when user filters
+                if (gMin != null && gr < gMin) return false;
+                if (gMax != null && gr > gMax) return false;
+                return true;
+              }
+              if (axis === "grade") {
+                const gr = gradeToOrdinal(valStr);
+                if (gr == null) return true;
+                const gMin = gradeToOrdinal(camp.gradeMin);
+                const gMax = gradeToOrdinal(camp.gradeMax);
+                const hasGrade = gMin != null || gMax != null;
+                if (hasGrade) {
+                  if (gMin != null && gr < gMin) return false;
+                  if (gMax != null && gr > gMax) return false;
+                  return true;
+                }
+                // Fallback via approx age = grade + 5
+                const age = gr + 5;
+                if (camp.ageMin == null && camp.ageMax == null) return false;
+                if (camp.ageMin != null && age < Number(camp.ageMin)) return false;
+                if (camp.ageMax != null && age > Number(camp.ageMax)) return false;
+                return true;
+              }
+              return true;
+            };
+
             const filtered = allCampPool
               .filter(c => campTypeFilter.size === 0 || (Array.isArray(c.campType) ? c.campType.some(t => campTypeFilter.has(t)) : campTypeFilter.has(c.campType)))
+              .filter(matchesAgeGrade)
               .slice()
               .sort((a, b) => {
                 if (campSort === "name") return a.name.localeCompare(b.name);
@@ -3530,6 +3591,40 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         }}
                       >{TYPE_CONFIG[t].emoji} {TYPE_CONFIG[t].label}</button>
                     ))}
+                  </div>
+                  {/* Age/Grade filter */}
+                  <div style={{ position: "relative", display: "inline-block" }}>
+                    <select
+                      value={ageGradeFilter}
+                      onChange={e => setAgeGradeFilter(e.target.value)}
+                      style={{
+                        appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+                        background: ageGradeFilter ? "#eef5e8" : "white",
+                        border: `1.5px solid ${ageGradeFilter ? "#3D6B1F" : "#E5E7EB"}`,
+                        borderRadius: 7, padding: "5px 28px 5px 12px",
+                        fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600,
+                        color: ageGradeFilter ? "#1F2937" : "#6B7280", cursor: "pointer",
+                        outline: "none",
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center",
+                      }}
+                    >
+                      <option value="">Any age / grade</option>
+                      <optgroup label="By age">
+                        {[4,5,6,7,8,9,10,11,12,13,14,15,16].map(a => (
+                          <option key={`a${a}`} value={`age:${a}`}>Age {a}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="By grade">
+                        {[
+                          ["K","Kindergarten"],["1","1st grade"],["2","2nd grade"],["3","3rd grade"],
+                          ["4","4th grade"],["5","5th grade"],["6","6th grade"],["7","7th grade"],
+                          ["8","8th grade"],["9","9th grade"],["10","10th grade"],["11","11th grade"],["12","12th grade"],
+                        ].map(([v,label]) => (
+                          <option key={`g${v}`} value={`grade:${v}`}>{label}</option>
+                        ))}
+                      </optgroup>
+                    </select>
                   </div>
                   {/* Sort */}
                   <div style={{ display: "flex", gap: 4, background: "#F3F4F6", borderRadius: 8, padding: 3 }}>
