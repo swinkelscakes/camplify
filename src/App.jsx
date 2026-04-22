@@ -3493,7 +3493,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               .sort((a, b) => {
                 if (campSort === "name") return a.name.localeCompare(b.name);
                 if (campSort === "type") { const at = Array.isArray(a.campType) ? a.campType[0] || "" : a.campType || ""; const bt = Array.isArray(b.campType) ? b.campType[0] || "" : b.campType || ""; return at.localeCompare(bt); }
-                return a.week - b.week; // date
+                // Date sort: earliest start date first. Camps without a start
+                // date go to the end so they don't all clump at the top.
+                const aStart = a.dateStart || "";
+                const bStart = b.dateStart || "";
+                if (!aStart && !bStart) return 0;
+                if (!aStart) return 1;
+                if (!bStart) return -1;
+                return aStart.localeCompare(bStart);
               });
 
             return (
@@ -3749,10 +3756,22 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             {(() => {
                               const bffCircle = liveCircles.find(c => c.name === "BFFs");
                               const bffMemberIds = new Set(bffCircle ? bffCircle.members.map(m => m.id) : []);
+                              // A member can appear in multiple liveCircles shared with me.
+                              // Dedup by (userId, child) so they render once in Who's Going.
+                              // Preserve the first-seen entry since members carry camps/weeks data.
+                              // Status comes from the member's real campStatus map for this camp,
+                              // defaulting to "enrolled" when unset (legacy rows without status).
+                              const seen = new Set();
                               const allMembers = liveCircles.flatMap(c => c.members.map(m => ({
                                 ...m, circleColor: c.color, isBff: bffMemberIds.has(m.id),
-                                status: m.id % 3 === 0 ? "waitlist" : m.id % 3 === 2 ? "thinking" : "enrolled",
-                              }))).filter(m => m.camps.includes(camp.id));
+                                status: m.campStatus?.[camp.id] || "enrolled",
+                              }))).filter(m => m.camps.includes(camp.id))
+                                .filter(m => {
+                                  const key = `${m.userId || ''}|${m.child || ''}`;
+                                  if (seen.has(key)) return false;
+                                  seen.add(key);
+                                  return true;
+                                });
                               const myKidMembers = kids.map(k => {
                                 const s = campStatus[camp.id]?.[k.id];
                                 const status = s ? (typeof s === "string" ? s : s?.status) : null;
@@ -4025,12 +4044,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   </div>
                                 );
                               })}
-                              {friendsHere.length > 0 && (
-                                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6B7280" }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                  {friendsHere.map(f => f.child).join(", ")} also going
-                                </div>
-                              )}
                             </div>
 
                             {/* Reviews section */}
@@ -4302,8 +4315,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               const initials = m.child[0] + lastName;
                     if (!friendCampsThisWeek[cid]) friendCampsThisWeek[cid] = { ...camp, friends: [] };
                     if (!friendCampsThisWeek[cid].friends.find(f => f.name === m.child)) {
-                      // Simulate friend status: member id %3 for variety
-                      const friendStatus = m.id % 3 === 0 ? "waitlist" : m.id % 3 === 2 ? "thinking" : "enrolled";
+                      // Use the member's real per-camp status, fall back to "enrolled"
+                      const friendStatus = m.campStatus?.[cid] || "enrolled";
                       friendCampsThisWeek[cid].friends.push({ name: m.child, initials, status: friendStatus });
                     }
                   });
@@ -5225,6 +5238,22 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           const status = typeof s === "string" ? s : s?.status;
                           const statusColor = status === "enrolled" ? "#3D6B1F" : status === "thinking" ? "#D97706" : "#9CA3AF";
                           const statusBg = status === "enrolled" ? "#eef5e8" : status === "thinking" ? "#FEF3C7" : "#F3F4F6";
+                          // Show the kid's actual enrolled date range (not the camp's full window).
+                          // s.weeks holds ISO Monday dates ["2026-06-15", ...]; format first week's
+                          // Monday through last week's Friday. If no weeks recorded, fall back to
+                          // the camp's overall dates for legacy data.
+                          const enrolledWeeks = (s && typeof s === "object" && Array.isArray(s.weeks)) ? s.weeks : [];
+                          let dateLabel = c.dates;
+                          if (enrolledWeeks.length > 0) {
+                            const sorted = enrolledWeeks.slice().sort();
+                            const firstMon = new Date(sorted[0] + "T12:00:00");
+                            const lastMon = new Date(sorted[sorted.length - 1] + "T12:00:00");
+                            const lastFri = new Date(lastMon); lastFri.setDate(lastFri.getDate() + 4);
+                            const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                            dateLabel = firstMon.getTime() === lastMon.getTime()
+                              ? `${fmt(firstMon)} – ${fmt(lastFri)}`
+                              : `${fmt(firstMon)} – ${fmt(lastFri)}`;
+                          }
                           return (
                             <div key={c.id} style={{
                               display: "flex", alignItems: "center", gap: 10,
@@ -5234,7 +5263,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontWeight: 600, fontSize: 13, color: "#1F2937" }}>{c.name}</div>
-                                <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{c.dates} · {c.location}</div>
+                                <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{dateLabel} · {c.location}</div>
                               </div>
                               <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, flexShrink: 0 }}>
                                 {status === "enrolled" ? "✓ Enrolled" : status === "thinking" ? "Thinking" : "Waitlisted"}
