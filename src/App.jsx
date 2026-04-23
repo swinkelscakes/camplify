@@ -2664,7 +2664,15 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
                               onClick={e => {
                                 if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY });
-                                else if (isBreak && person.isMyKid) { const nl = window.prompt("Break label:", breakLabel); if (nl !== null) setKidBreak(person.id, w.num, nl || "Break"); }
+                                else if (isBreak && person.isMyKid) {
+                                  const nl = window.prompt(`Break label (or leave blank to remove "${breakLabel}"):`, breakLabel);
+                                  if (nl === null) return; // cancelled
+                                  if (nl.trim() === "") {
+                                    if (window.confirm(`Remove "${breakLabel}" break?`)) toggleKidWeekBreak(person.id, w.num);
+                                  } else {
+                                    setKidBreak(person.id, w.num, nl);
+                                  }
+                                }
                                 else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
                               }}>
                               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px" }}>
@@ -3020,6 +3028,22 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     {isBreak ? (
                                       <div onClick={() => { if (person.isMyKid) { const nl = window.prompt("Break label:", breakLabel); if (nl !== null) setKidBreak(person.id, w.num, nl || "Break"); } }}
                                         style={{ width: "100%", borderRadius: 12, background: "#DCFCE7", cursor: person.isMyKid ? "pointer" : "default", display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", position: "relative" }}>
+                                        {person.isMyKid && (
+                                          <button
+                                            onClick={e => { e.stopPropagation(); if (window.confirm(`Remove "${breakLabel}" break?`)) toggleKidWeekBreak(person.id, w.num); }}
+                                            title="Remove break"
+                                            style={{
+                                              position: "absolute", top: 4, right: 4, zIndex: 2,
+                                              width: 18, height: 18, borderRadius: "50%",
+                                              background: "rgba(255,255,255,0.85)", border: "none",
+                                              color: "#15803D", fontSize: 12, fontWeight: 700,
+                                              lineHeight: 1, padding: 0, cursor: "pointer",
+                                              display: "flex", alignItems: "center", justifyContent: "center",
+                                            }}
+                                            onMouseEnter={e => { e.currentTarget.style.background = "white"; e.currentTarget.style.color = "#DC2626"; }}
+                                            onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.85)"; e.currentTarget.style.color = "#15803D"; }}
+                                          >×</button>
+                                        )}
                                         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, position: "relative" }}>
                                           <span style={{ fontSize: 16 }}>🌿</span>
                                           <span style={{ fontSize: 11, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "center", padding: "0 6px" }}>{breakLabel}</span>
