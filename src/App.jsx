@@ -3805,7 +3805,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {filtered.map(camp => {
                     const campWeeks = (camp.weekRange || [camp.week]).map(wn => computedWeeks.find(w => w.num === wn)).filter(Boolean);
-                    const friendsHere = liveCircles.flatMap(c => c.members).filter(m => m.camps.includes(camp.id));
+                    const friendsHere = liveCircles.flatMap(c => c.members).filter(m => m.userId !== userId && m.camps.includes(camp.id));
                     const campTypes = Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []); const typeConf = TYPE_CONFIG[campTypes[0]];
                     const isFocused = focusedCampId === camp.id;
                     const isExpanded = expandedCampId === camp.id;
@@ -4011,14 +4011,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               const bffMemberIds = new Set(bffCircle ? bffCircle.members.map(m => m.id) : []);
                               // A member can appear in multiple liveCircles shared with me.
                               // Dedup by (userId, child) so they render once in Who's Going.
-                              // Preserve the first-seen entry since members carry camps/weeks data.
+                              // Also skip my own userId — my kids come in via myKidMembers below,
+                              // so including my CircleMembers rows here double-counts them.
                               // Status comes from the member's real campStatus map for this camp,
                               // defaulting to "enrolled" when unset (legacy rows without status).
                               const seen = new Set();
                               const allMembers = liveCircles.flatMap(c => c.members.map(m => ({
                                 ...m, circleColor: c.color, isBff: bffMemberIds.has(m.id),
                                 status: m.campStatus?.[camp.id] || "enrolled",
-                              }))).filter(m => m.camps.includes(camp.id))
+                              }))).filter(m => m.userId !== userId)
+                                .filter(m => m.camps.includes(camp.id))
                                 .filter(m => {
                                   const key = `${m.userId || ''}|${m.child || ''}`;
                                   if (seen.has(key)) return false;
@@ -4520,7 +4522,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               {/* All weeks scrollable */}
               {computedWeeks.map((w) => {
                 // Compute friend density for this week (used in header)
-                const allFriendMembers = liveCircles.flatMap(c => c.members);
+                const allFriendMembers = liveCircles.flatMap(c => c.members).filter(m => m.userId !== userId);
                 const friendDensity = new Set(
                   allFriendMembers.flatMap(m =>
                     m.camps.filter(cid => {
