@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -533,6 +533,13 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [airtableKids, setAirtableKids] = useState([]);
   const [airtableCircles, setAirtableCircles] = useState([]);
   const [enrollmentIds, setEnrollmentIds] = useState({});
+  // Per-enrollment freeform note (my own kids). Keyed by `${kidId}-${campId}`.
+  // Visible to anyone who can see this kid's enrollment (i.e. circle members).
+  const [enrollmentNotes, setEnrollmentNotes] = useState({});
+  // Note editor state for the grid popover
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteEditingKey, setNoteEditingKey] = useState(null); // `${kidId}-${campId}` being edited
+  const [noteSaving, setNoteSaving] = useState(false);
   const [breakIds, setBreakIds] = useState({});
   const [importantDates, setImportantDates] = useState([]); // [{ id, kidId, label, dateStart, dateEnd }]
   const [circleDates, setCircleDates] = useState([]); // [{ id, circleId, label, dateStart, dateEnd, createdBy }]
@@ -606,6 +613,7 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
         setImportantDates(importantDatesData);
         const newStatus = {};
         const newIds = {};
+        const newEnrollmentNotes = {};
         enrollments.forEach(e => {
           if (!e.kidId || !e.campId) return;
           if (!newStatus[e.campId]) newStatus[e.campId] = {};
@@ -617,9 +625,11 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
             weeks: e.weeks || [],
           };
           newIds[e.campId + '-' + e.kidId] = e.id;
+          if (e.note) newEnrollmentNotes[e.kidId + '-' + e.campId] = e.note;
         });
         setCampStatus(newStatus);
         setEnrollmentIds(newIds);
+        setEnrollmentNotes(newEnrollmentNotes);
 
         // Restore kid breaks
         const newKidBreaks = {};
@@ -2663,7 +2673,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             {/* Camp cell */}
                             <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
                               onClick={e => {
-                                if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY });
+                                if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, person, x: e.clientX, y: e.clientY });
                                 else if (isBreak && person.isMyKid) {
                                   const nl = window.prompt(`Break label (or leave blank to remove "${breakLabel}"):`, breakLabel);
                                   if (nl === null) return; // cancelled
@@ -2984,14 +2994,38 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 const renderCampChip = (camp, isEnrolled, height) => {
                                   const bg = isEnrolled ? "#3D6B1F" : "#FEF08A";
                                   const textColor = isEnrolled ? "white" : "#713F12";
-                                  const campDays = camp.days?.length > 0 ? camp.days : allDays;
+                                  // Which days this specific person is actually attending. For my
+                                  // kid, read from local state; for a friend, read from the member
+                                  // campDays map. Fall back to the camp's running days, then to all
+                                  // weekdays, so something always renders.
+                                  const myDays = person.isMyKid
+                                    ? (campStatus[camp.id]?.[person.id]?.days || [])
+                                    : (person.campDays?.[camp.id] || []);
+                                  const hasPerPersonDays = Array.isArray(myDays) && myDays.length > 0;
+                                  const campDays = hasPerPersonDays ? myDays : (camp.days?.length > 0 ? camp.days : allDays);
                                   const fontSize = height > 50 ? 11.5 : height > 36 ? 10 : 9;
+                                  // Does this enrollment carry a note? For my kids read the local
+                                  // state map; for friends read the campNotes map on their member row.
+                                  const hasNote = person.isMyKid
+                                    ? !!(enrollmentNotes[`${person.id}-${camp.id}`])
+                                    : !!(person.campNotes && person.campNotes[camp.id]);
                                   return (
                                     <button key={camp.id}
-                                      onClick={e => { e.stopPropagation(); setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, x: e.clientX, y: e.clientY }); }}
+                                      onClick={e => { e.stopPropagation(); setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, person, x: e.clientX, y: e.clientY }); }}
                                       style={{ width: "100%", height, borderRadius: 8, background: bg, border: isEnrolled ? "none" : "1.5px solid #CA8A04", cursor: "pointer", fontFamily: "Inter, sans-serif", display: "flex", flexDirection: "column", alignItems: "stretch", padding: 0, overflow: "hidden", transition: "filter 0.12s", position: "relative", flexShrink: 0 }}
                                       onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.93)"}
                                       onMouseLeave={e => e.currentTarget.style.filter = "none"}>
+                                      {hasNote && (
+                                        <span
+                                          title="Has a note — click to view"
+                                          style={{
+                                            position: "absolute", top: 2, right: 4, zIndex: 2,
+                                            fontSize: height > 36 ? 16 : 13, fontWeight: 900,
+                                            color: textColor, opacity: 0.95, lineHeight: 1,
+                                            pointerEvents: "none",
+                                          }}
+                                        >*</span>
+                                      )}
                                       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "4px 6px" }}>
                                         <span style={{ fontSize, fontWeight: 700, color: textColor, textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "center", lineHeight: 1.2, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                                           {camp.name}
@@ -3228,6 +3262,95 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     borderRadius: 5, padding: "2px 7px",
                                   }}>{m.child}</span>
                                 ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Note section: editable for my kid's enrollment, read-only for friends'.
+                            Only shown when the viewer actually has an enrollment on this camp for
+                            the relevant person (enrollment id exists for my kid, campNotes lookup
+                            hits for a friend). */}
+                        {(() => {
+                          const person = gridPopover.person;
+                          if (!person) return null;
+                          if (person.isMyKid) {
+                            const key = `${person.id}-${gridPopover.camp.id}`;
+                            const enrollmentId = enrollmentIds[gridPopover.camp.id + '-' + person.id];
+                            if (!enrollmentId) return null; // not enrolled → no note
+                            const savedNote = enrollmentNotes[key] || "";
+                            const isEditing = noteEditingKey === key;
+                            const beginEdit = () => { setNoteDraft(savedNote); setNoteEditingKey(key); };
+                            const cancelEdit = () => { setNoteDraft(""); setNoteEditingKey(null); };
+                            const saveNote = async () => {
+                              if (noteSaving) return;
+                              setNoteSaving(true);
+                              const trimmed = noteDraft.trim();
+                              // Optimistic
+                              setEnrollmentNotes(prev => {
+                                const next = { ...prev };
+                                if (trimmed) next[key] = trimmed;
+                                else delete next[key];
+                                return next;
+                              });
+                              try { await updateEnrollmentNote(enrollmentId, trimmed); }
+                              catch (e) { console.error('Note save failed:', e); }
+                              finally { setNoteSaving(false); setNoteEditingKey(null); setNoteDraft(""); }
+                            };
+                            return (
+                              <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px" }}>Your note</div>
+                                  {!isEditing && (
+                                    <button onClick={beginEdit} style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: "#3D6B1F" }}>
+                                      {savedNote ? "Edit" : "+ Add"}
+                                    </button>
+                                  )}
+                                </div>
+                                {isEditing ? (
+                                  <div>
+                                    <textarea
+                                      autoFocus
+                                      value={noteDraft}
+                                      onChange={e => setNoteDraft(e.target.value)}
+                                      placeholder="e.g. Needs pickup by 2pm, bringing Lily too…"
+                                      rows={3}
+                                      style={{ width: "100%", padding: "7px 9px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#1F2937", outline: "none", resize: "vertical", boxSizing: "border-box" }}
+                                    />
+                                    <div style={{ fontSize: 10.5, color: "#9CA3AF", marginTop: 4 }}>Visible to everyone in your circles</div>
+                                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                                      <button onClick={saveNote} disabled={noteSaving}
+                                        style={{ background: "#3D6B1F", border: "none", borderRadius: 6, padding: "5px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, color: "white", cursor: "pointer", opacity: noteSaving ? 0.6 : 1 }}>
+                                        {noteSaving ? "Saving…" : "Save"}
+                                      </button>
+                                      <button onClick={cancelEdit} disabled={noteSaving}
+                                        style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 6, padding: "5px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer" }}>
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : savedNote ? (
+                                  <div style={{ background: "#F9FAFB", border: "1px solid #F3F4F6", borderRadius: 7, padding: "8px 10px", fontSize: 12.5, color: "#374151", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                    {savedNote}
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic" }}>
+                                    No note yet. Add one to share context with your circles.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          // Friend's enrollment — read-only view of their note (if any)
+                          const friendNote = person.campNotes?.[gridPopover.camp.id];
+                          if (!friendNote) return null;
+                          return (
+                            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6 }}>
+                                {(person.name || person.child || "Friend") + "'s note"}
+                              </div>
+                              <div style={{ background: "#F9FAFB", border: "1px solid #F3F4F6", borderRadius: 7, padding: "8px 10px", fontSize: 12.5, color: "#374151", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                {friendNote}
                               </div>
                             </div>
                           );
@@ -3578,6 +3701,17 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               .sort((a, b) => {
                 if (campSort === "name") return a.name.localeCompare(b.name);
                 if (campSort === "type") { const at = Array.isArray(a.campType) ? a.campType[0] || "" : a.campType || ""; const bt = Array.isArray(b.campType) ? b.campType[0] || "" : b.campType || ""; return at.localeCompare(bt); }
+                if (campSort === "dateEnd") {
+                  // Sort by latest day the camp runs (dateEnd if set, else
+                  // dateStart for single-week camps). Earliest-ending first;
+                  // camps with neither go to the bottom.
+                  const aEnd = a.dateEnd || a.dateStart || "";
+                  const bEnd = b.dateEnd || b.dateStart || "";
+                  if (!aEnd && !bEnd) return 0;
+                  if (!aEnd) return 1;
+                  if (!bEnd) return -1;
+                  return aEnd.localeCompare(bEnd);
+                }
                 // Date sort: earliest start date first. Camps without a start
                 // date go to the end so they don't all clump at the top.
                 const aStart = a.dateStart || "";
@@ -3652,7 +3786,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   </div>
                   {/* Sort */}
                   <div style={{ display: "flex", gap: 4, background: "#F3F4F6", borderRadius: 8, padding: 3 }}>
-                    {[["date","Date"],["name","A–Z"],["type","Type"]].map(([val, lbl]) => (
+                    {[["date","Start"],["dateEnd","End"],["name","A–Z"],["type","Type"]].map(([val, lbl]) => (
                       <button key={val}
                         onClick={() => setCampSort(val)}
                         style={{

@@ -169,6 +169,7 @@ export const getEnrollments = async (kidIds) => {
           beforeCare: f.BeforeCare || false,
           afterCare: f.AfterCare || false,
           weeks: f.Weeks ? f.Weeks.split(',').filter(Boolean) : [],
+          note: f.Note || '',
         };
       });
   } catch (e) {
@@ -205,6 +206,14 @@ export const updateEnrollment = async (enrollmentId, status, days, beforeCare, a
 // Delete an enrollment
 export const deleteEnrollment = async (enrollmentId) => {
   await base('Enrollments').destroy(enrollmentId);
+};
+
+// Update just the note on an enrollment. Notes are shared with people
+// who can see this enrollment (circle members), so keep it plaintext.
+export const updateEnrollmentNote = async (enrollmentId, note) => {
+  await base('Enrollments').update(enrollmentId, {
+    Note: note || '',
+  });
 };
 
 // Load breaks for a list of kid IDs
@@ -379,11 +388,17 @@ export const getCircles = async (userId) => {
           const memberCampWeeks = {};
           // Build status map: campId -> status
           const memberCampStatus = {};
+          // Build note map: campId -> free-text note (visible to circle)
+          const memberCampNotes = {};
+          // Build days map: campId -> enrolled days ["M","T",...]
+          const memberCampDays = {};
           memberEnrollments.forEach(e => {
             const campId = e.fields.Camp ? e.fields.Camp[0] : null;
             if (campId) {
               memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').filter(Boolean) : [];
               memberCampStatus[campId] = e.fields.Status || 'enrolled';
+              if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
+              memberCampDays[campId] = e.fields.Days || [];
             }
           });
           // Find this member's breaks
@@ -402,6 +417,8 @@ export const getCircles = async (userId) => {
             camps: memberCampIds,
             campWeeks: memberCampWeeks,
             campStatus: memberCampStatus,
+            campNotes: memberCampNotes,
+            campDays: memberCampDays,
             breaks: memberBreaks,
             visible: hasVisibleKid,
             profile: specificKid ? {
@@ -646,11 +663,13 @@ export const getCirclePublic = async (inviteCode) => {
         .filter(Boolean);
       const memberCampWeeks = {};
       const memberCampStatus = {};
+      const memberCampNotes = {};
       memberEnrollments.forEach(e => {
         const campId = e.fields.Camp ? e.fields.Camp[0] : null;
         if (campId) {
           memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').filter(Boolean) : [];
           memberCampStatus[campId] = e.fields.Status || 'enrolled';
+          if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
         }
       });
       const memberBreaks = allBreaks
@@ -665,6 +684,7 @@ export const getCirclePublic = async (inviteCode) => {
         camps: memberCampIds,
         campWeeks: memberCampWeeks,
         campStatus: memberCampStatus,
+        campNotes: memberCampNotes,
         breaks: memberBreaks,
         visible: isVisible,
       };
