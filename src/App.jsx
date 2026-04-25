@@ -1016,6 +1016,14 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   // camp so the user lands near "now" instead of at the far left.
   const gridScrollRef = useRef(null);
   const didInitialScrollRef = useRef(false);
+  // Re-arm the ref every time the user navigates to the Overview tab so the
+  // grid re-anchors to the week before the next upcoming enrolled camp,
+  // instead of staying wherever the user happened to scroll last session.
+  useEffect(() => {
+    if (activeTab === "grid") {
+      didInitialScrollRef.current = false;
+    }
+  }, [activeTab]);
 
   // Compute week columns dynamically from all camps
   const computedWeeks = getWeeksFromCamps([...camps, ...airtableCamps, ...dynamicCamps]);
