@@ -668,6 +668,14 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   // Kids whose stale-age reminder was dismissed this session. Session-only:
   // on next full reload the reminder will surface again if still stale.
   const [ageReminderDismissed, setAgeReminderDismissed] = useState(new Set());
+  // Welcome letter modal: shown once per device (controlled by localStorage).
+  // Bump WELCOME_KEY version if the letter content changes and you want
+  // existing users to see it again.
+  const WELCOME_KEY = "camplify_welcome_dismissed_v1";
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try { return window.localStorage.getItem(WELCOME_KEY) !== "1"; }
+    catch { return true; }
+  });
   // Circle-level date editor state (shared across circles — only one open at a time)
   const [circleDateCircleId, setCircleDateCircleId] = useState(null); // which circle is editing
   const [circleDateEditId, setCircleDateEditId] = useState(null); // which existing date is being edited (null = adding new)
@@ -2262,6 +2270,74 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── WELCOME LETTER MODAL ── */}
+      {/* Shown once per device on first sign-in. Persistence: localStorage key
+          WELCOME_KEY. Skip while the app is still loading or while the
+          invite-onboarding wizard is showing, so we don't stack modals. */}
+      {showWelcome && !loading && !onboardingWizard && (() => {
+        const dismiss = () => {
+          try { window.localStorage.setItem(WELCOME_KEY, "1"); } catch {}
+          setShowWelcome(false);
+        };
+        return (
+          <div
+            onClick={dismiss}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2050, padding: 16, fontFamily: "Inter, sans-serif" }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: "white", borderRadius: 16, padding: "28px 28px 22px", maxWidth: 520, width: "100%", maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.25)" }}
+            >
+              {/* Welcome letter */}
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#3D6B1F", marginBottom: 16 }}>
+                Welcome!
+              </div>
+              <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.6 }}>
+                <p style={{ margin: "0 0 12px" }}>Thanks for trying Camplify!</p>
+                <p style={{ margin: "0 0 16px" }}>To get started, add your first kid's profile. Then, start adding their camps.</p>
+
+                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Adding camps</div>
+                <p style={{ margin: "0 0 6px" }}>If you need to add a camp that hasn't been entered yet, feel free to do so. Or, send me a link, and I'll do it for you.</p>
+                <p style={{ margin: "0 0 16px", fontStyle: "italic", color: "#6B7280" }}>Please add all days and weeks for any camp you add, not just when your kid is attending.</p>
+
+                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Sharing and circles</div>
+                <p style={{ margin: "0 0 6px" }}>If you'd like to share Camplify with friends outside this circle, you can create new circles and invite people to join.</p>
+                <p style={{ margin: "0 0 16px" }}>You can also add siblings and create or join circles for them.</p>
+
+                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Privacy</div>
+                <p style={{ margin: "0 0 16px" }}>Only people in your circles will be able to see your profile.</p>
+
+                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Feedback</div>
+                <p style={{ margin: "0 0 16px" }}>I welcome your feedback! Please send any suggestions for how Camplify can be more useful. And, if you see anything that isn't working properly, please let me know.</p>
+
+                <p style={{ margin: "0 0 16px" }}>Thanks again for being a Camplify early adopter :)</p>
+
+                <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 12, color: "#6B7280", fontSize: 13 }}>
+                  Simran Kagan<br />
+                  <a href="mailto:simran@simrandesign.com" style={{ color: "#3D6B1F", textDecoration: "none", fontWeight: 600 }}>simran@simrandesign.com</a><br />
+                  <a href="tel:+15852037400" style={{ color: "#6B7280", textDecoration: "none" }}>585.203.7400</a>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 22 }}>
+                <button
+                  onClick={dismiss}
+                  style={{
+                    background: "#3D6B1F", border: "none", borderRadius: 10,
+                    padding: "10px 22px", fontFamily: "Inter, sans-serif",
+                    fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.filter = "brightness(1.08)"}
+                  onMouseLeave={e => e.currentTarget.style.filter = "none"}
+                >
+                  Got it
+                </button>
+              </div>
             </div>
           </div>
         );
