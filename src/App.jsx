@@ -2302,8 +2302,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 <p style={{ margin: "0 0 16px" }}>To get started, add your first kid's profile. Then, start adding their camps.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Adding camps</div>
-                <p style={{ margin: "0 0 6px" }}>If you need to add a camp that hasn't been entered yet, feel free to do so. Or, send me a link, and I'll do it for you.</p>
-                <p style={{ margin: "0 0 16px", fontStyle: "italic", color: "#6B7280" }}>Please add all days and weeks for any camp you add, not just when your kid is attending.</p>
+                <p style={{ margin: "0 0 16px" }}>To add a camp that isn't listed, click the Add Camp button at the top of the page. Or, send me the information, and I'll add it for you.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Sharing and circles</div>
                 <p style={{ margin: "0 0 6px" }}>If you'd like to share Camplify with friends outside this circle, you can create new circles and invite people to join.</p>
@@ -6238,6 +6237,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 <div className="import-success">Camp added successfully!</div>
               ) : (
                 <>
+                  {/* Reminder for camp adders */}
+                  <div style={{
+                    background: "#FEF3C7", border: "1px solid #FDE68A",
+                    borderRadius: 10, padding: "10px 14px",
+                    marginBottom: 14, fontFamily: "Inter, sans-serif",
+                    fontSize: 13, color: "#78350F", display: "flex", alignItems: "center", gap: 8,
+                  }}>
+                    <span style={{ fontSize: 15 }}>📅</span>
+                    <span>Please add all days and weeks the camp runs, not just when your kid is attending.</span>
+                  </div>
                   {/* ── EMAIL FORWARDING CARD ── */}
                   {(() => {
                     const forwardEmail = "add@camps.camplify.app";
