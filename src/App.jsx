@@ -1061,6 +1061,10 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   // camp so the user lands near "now" instead of at the far left.
   const gridScrollRef = useRef(null);
   const didInitialScrollRef = useRef(false);
+  // Mobile pager offset (which week index is shown). Defaults to 0; the
+  // useEffect below recalculates the right starting week when the user
+  // lands on the Overview tab on mobile.
+  const [mobileWeekOffset, setMobileWeekOffset] = useState(0);
   // Re-arm the ref every time the user navigates to the Overview tab so the
   // grid re-anchors to the week before the next upcoming enrolled camp,
   // instead of staying wherever the user happened to scroll last session.
@@ -1118,6 +1122,67 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     }
     return weeks;
   })();
+
+  // Mobile mirror of the desktop auto-scroll: when activeTab is the Overview
+  // grid, set the mobile week pager to the week BEFORE the user's (or their
+  // circle members') next upcoming enrolled camp. Re-fires every time the
+  // user lands on the Overview tab so it stays current as they navigate.
+  useEffect(() => {
+    if (activeTab !== "grid") return;
+    if (!visibleWeeks || visibleWeeks.length === 0) return;
+    if (typeof window === "undefined" || window.innerWidth >= 768) return; // desktop has its own scroll path
+    const todayIso = (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    })();
+    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+    let nextCampStart = null;
+    // Priority 1: my own kids' enrolled camps
+    airtableKids.forEach(k => {
+      allCampPool.forEach(camp => {
+        const s = campStatus[camp.id]?.[k.id];
+        if (!s) return;
+        const statusVal = typeof s === "string" ? s : s?.status;
+        if (statusVal !== "enrolled") return;
+        const end = camp.dateEnd || camp.dateStart;
+        if (!camp.dateStart || !end || end < todayIso) return;
+        if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+      });
+    });
+    // Priority 2: any circle member's enrolled camp (so brand-new users still land near action)
+    if (!nextCampStart && airtableCircles && airtableCircles.length > 0) {
+      airtableCircles.forEach(c => {
+        (c.members || []).forEach(m => {
+          (m.camps || []).forEach(cid => {
+            const camp = allCampPool.find(c2 => c2.id === cid);
+            if (!camp) return;
+            const status = m.campStatus?.[cid] || 'enrolled';
+            if (status !== 'enrolled') return;
+            const end = camp.dateEnd || camp.dateStart;
+            if (!camp.dateStart || !end || end < todayIso) return;
+            if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+          });
+        });
+      });
+    }
+    if (!nextCampStart) return; // nothing upcoming → leave at current offset
+    // Step back one week from the camp's Monday
+    const targetMonday = (() => {
+      const d = new Date(nextCampStart + "T12:00:00");
+      const dow = d.getDay();
+      d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+      d.setDate(d.getDate() - 7);
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, "0");
+      const da = String(d.getDate()).padStart(2, "0");
+      return `${y}-${mo}-${da}`;
+    })();
+    const idx = visibleWeeks.findIndex(w => w.num === targetMonday);
+    if (idx >= 0) setMobileWeekOffset(idx);
+  }, [activeTab, airtableKids, airtableCircles, camps, airtableCamps, dynamicCamps, campStatus]);
 
   // US federal holidays + common school holidays — weekday dates for 2026
   const US_HOLIDAYS = {
@@ -1270,7 +1335,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [joinLoading, setJoinLoading] = useState(false);
   const [circleKidIds, setCircleKidIds] = useState(new Set());
   const [parentName, setParentName] = useState(userName || "");
-  const [mobileWeekOffset, setMobileWeekOffset] = useState(0);
   const [campSearch, setCampSearch] = useState("");
   const [addingDate, setAddingDate] = useState(false);
   const [newDateLabel, setNewDateLabel] = useState("");
@@ -2736,8 +2800,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               const allDays = ["M","T","W","Th","F"];
               return (
                 <div style={{ padding: "0 0 80px" }}>
-                  {/* Week nav */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, background: "white", padding: "12px 16px", borderRadius: 12, border: "1px solid #E5E7EB" }}>
+                  {/* Week nav — sticky at top so the user can see which week
+                      they're scrolling within. Stacks just below the app
+                      header (which is also sticky at top: 0). */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, background: "white", padding: "12px 16px", borderRadius: 12, border: "1px solid #E5E7EB", position: "sticky", top: 56, zIndex: 50, boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
                     <button onClick={() => setMobileWeekOffset(o => Math.max(0, o - 1))} disabled={mobileWeekOffset === 0}
                       style={{ background: "none", border: "none", fontSize: 20, cursor: mobileWeekOffset === 0 ? "default" : "pointer", color: mobileWeekOffset === 0 ? "#D1D5DB" : "#374151", padding: "0 8px" }}>←</button>
                     <div style={{ textAlign: "center" }}>
@@ -2862,6 +2928,219 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       );
                     })}
                   </div>
+                  {/* Camp detail popover for mobile (centered modal style). */}
+                  {gridPopover && (() => {
+                    const camp = gridPopover.camp;
+                    const personObj = gridPopover.person;
+                    return (
+                      <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.4)" }} onClick={() => setGridPopover(null)}>
+                        <div onClick={e => e.stopPropagation()}
+                          style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(92vw, 360px)", maxHeight: "85vh", overflow: "auto", background: "white", borderRadius: 14, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", fontFamily: "Inter, sans-serif" }}>
+                          <div style={{ height: 5, background: camp.color, borderRadius: "14px 14px 0 0" }} />
+                          <div style={{ padding: "14px 16px 16px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 8 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {camp.url && camp.url !== "#" ? (
+                                  <a href={camp.url} target="_blank" rel="noreferrer"
+                                    style={{ fontWeight: 800, fontSize: 14, color: "#1F2937", textDecoration: "none", lineHeight: 1.3, display: "block" }}>
+                                    {camp.name}
+                                  </a>
+                                ) : (
+                                  <div style={{ fontWeight: 800, fontSize: 14, color: "#1F2937", lineHeight: 1.3 }}>{camp.name}</div>
+                                )}
+                                <div style={{ fontSize: 11.5, color: "#6B7280", marginTop: 3 }}>{camp.dates}</div>
+                              </div>
+                              <button onClick={() => setGridPopover(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 22, lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                              {camp.location && (
+                                <div style={{ fontSize: 12, color: "#374151" }}>📍 {camp.location}</div>
+                              )}
+                              {camp.hours && (
+                                <div style={{ fontSize: 12, color: "#374151" }}>🕐 {camp.hours}</div>
+                              )}
+                              {(camp.ageMin || camp.ageMax) && (
+                                <div style={{ fontSize: 12, color: "#374151" }}>👤 {camp.ageMin && camp.ageMax ? `Ages ${camp.ageMin}–${camp.ageMax}` : camp.ageMin ? `Ages ${camp.ageMin}+` : `Up to age ${camp.ageMax}`}</div>
+                              )}
+                              {camp.cost && (
+                                <div style={{ fontSize: 12, color: "#3D6B1F", fontWeight: 700 }}>${Number(camp.cost).toLocaleString()}</div>
+                              )}
+                            </div>
+                            {/* Note section: editable for my kid, read-only for friends */}
+                            {(() => {
+                              if (!personObj) return null;
+                              if (personObj.isMyKid) {
+                                const key = `${personObj.id}-${camp.id}`;
+                                const enrollmentId = enrollmentIds[camp.id + '-' + personObj.id];
+                                if (!enrollmentId) return null;
+                                const savedNote = enrollmentNotes[key] || "";
+                                const isEditing = noteEditingKey === key;
+                                const beginEdit = () => { setNoteDraft(savedNote); setNoteEditingKey(key); };
+                                const cancelEdit = () => { setNoteDraft(""); setNoteEditingKey(null); };
+                                const saveNote = async () => {
+                                  if (noteSaving) return;
+                                  setNoteSaving(true);
+                                  const trimmed = noteDraft.trim();
+                                  setEnrollmentNotes(prev => {
+                                    const next = { ...prev };
+                                    if (trimmed) next[key] = trimmed; else delete next[key];
+                                    return next;
+                                  });
+                                  try { await updateEnrollmentNote(enrollmentId, trimmed); }
+                                  catch (e) { console.error('Note save failed:', e); }
+                                  finally { setNoteSaving(false); setNoteEditingKey(null); setNoteDraft(""); }
+                                };
+                                return (
+                                  <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px" }}>Your note</div>
+                                      {!isEditing && (
+                                        <button onClick={beginEdit} style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: "#3D6B1F" }}>
+                                          {savedNote ? "Edit" : "+ Add"}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {isEditing ? (
+                                      <div>
+                                        <textarea autoFocus value={noteDraft}
+                                          onChange={e => setNoteDraft(e.target.value)}
+                                          placeholder="e.g. Needs pickup by 2pm..."
+                                          rows={3}
+                                          style={{ width: "100%", padding: "7px 9px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#1F2937", outline: "none", resize: "vertical", boxSizing: "border-box" }}
+                                        />
+                                        <div style={{ fontSize: 10.5, color: "#9CA3AF", marginTop: 4 }}>Visible to everyone in your circles</div>
+                                        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                                          <button onClick={saveNote} disabled={noteSaving}
+                                            style={{ background: "#3D6B1F", border: "none", borderRadius: 6, padding: "5px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, color: "white", cursor: "pointer", opacity: noteSaving ? 0.6 : 1 }}>
+                                            {noteSaving ? "Saving…" : "Save"}
+                                          </button>
+                                          <button onClick={cancelEdit} disabled={noteSaving}
+                                            style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 6, padding: "5px 12px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer" }}>
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : savedNote ? (
+                                      <div style={{ background: "#F9FAFB", border: "1px solid #F3F4F6", borderRadius: 7, padding: "8px 10px", fontSize: 12.5, color: "#374151", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                        {savedNote}
+                                      </div>
+                                    ) : (
+                                      <div style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic" }}>
+                                        No note yet.
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              const friendNote = personObj.campNotes?.[camp.id];
+                              if (!friendNote) return null;
+                              return (
+                                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+                                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6 }}>
+                                    {(personObj.name || personObj.child || "Friend") + "'s note"}
+                                  </div>
+                                  <div style={{ background: "#F9FAFB", border: "1px solid #F3F4F6", borderRadius: 7, padding: "8px 10px", fontSize: 12.5, color: "#374151", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                    {friendNote}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                            <button
+                              onClick={() => { setFocusedCampId(camp.id); setExpandedCampId(camp.id); setGridPopover(null); setActiveTab("camps"); }}
+                              style={{ marginTop: 14, width: "100%", background: "#3D6B1F", color: "white", border: "none", borderRadius: 8, padding: "9px 0", fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                              View Full Camp Details →
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {/* Friend mini-profile popover (also rendered in desktop
+                      branch below; included here so mobile users can see it). */}
+                  {friendProfilePopover && (() => {
+                    const { person } = friendProfilePopover;
+                    const prof = person.profile || {};
+                    const isVisible = person.visible !== false;
+                    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+                    const friendCamps = allCampPool.filter(c => person.camps?.includes(c.id));
+                    const parentLastInitial = person.name?.split(" ")[1]?.[0] || "";
+                    const INTEREST_MAP = { sports:"⚽ Sports", art:"🎨 Art", drama:"🎭 Drama", dance:"🩰 Dance", outdoors:"🌲 Outdoors", language:"🌍 Language", classic:"🏕️ Classic", stem:"🔬 STEM", music:"🎵 Music", academics:"📚 Academics" };
+                    const favKey = `${person.userId}|${person.child}`;
+                    const isFav = favoriteKeys.has(favKey);
+                    return (
+                      <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.4)" }} onClick={() => setFriendProfilePopover(null)}>
+                        <div onClick={e => e.stopPropagation()}
+                          style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(92vw, 360px)", maxHeight: "85vh", overflow: "auto", background: "white", borderRadius: 14, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", fontFamily: "Inter, sans-serif" }}>
+                          <div style={{ padding: "14px 16px", background: person.circleColor || "#3D6B1F", color: "white", display: "flex", alignItems: "center", gap: 10, borderRadius: "14px 14px 0 0" }}>
+                            <div style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>
+                              {getMemberInitials(person.child, person.name)}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 15, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.child || person.name}</div>
+                              {person.name && person.child && <div style={{ fontSize: 12, opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`Parent: ${person.name}${parentLastInitial ? "" : ""}`}</div>}
+                            </div>
+                            <button onClick={() => toggleFavorite(person.userId, person.child)}
+                              title={isFav ? `Unfavorite ${person.child}` : `Favorite ${person.child}`}
+                              style={{ background: "none", border: "none", cursor: "pointer", padding: 4, flexShrink: 0, lineHeight: 0, color: isFav ? "#FEE2E2" : "rgba(255,255,255,0.85)" }}>
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill={isFav ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                              </svg>
+                            </button>
+                            <button onClick={() => setFriendProfilePopover(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.8)", fontSize: 22, lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
+                          </div>
+                          {isVisible ? (
+                            <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+                              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                                {prof.age && (
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3 }}>Age</div>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1F2937" }}>{prof.age}</div>
+                                  </div>
+                                )}
+                                {prof.zipcode && (
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3 }}>Zip</div>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1F2937" }}>{prof.zipcode}</div>
+                                  </div>
+                                )}
+                              </div>
+                              {prof.interests && prof.interests.length > 0 && (
+                                <div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>Interests</div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                    {prof.interests.map(i => (
+                                      <span key={i} style={{ fontSize: 11.5, padding: "3px 9px", borderRadius: 12, background: "#F3F4F6", color: "#374151", fontWeight: 600 }}>{INTEREST_MAP[i] || i}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {prof.bio && (
+                                <div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>About</div>
+                                  <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{prof.bio}</div>
+                                </div>
+                              )}
+                              {friendCamps.length > 0 && (
+                                <div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>Enrolled in</div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                    {friendCamps.slice(0, 6).map(c => (
+                                      <div key={c.id} style={{ fontSize: 12, color: "#374151" }}>• {c.name}</div>
+                                    ))}
+                                    {friendCamps.length > 6 && <div style={{ fontSize: 11, color: "#9CA3AF" }}>+{friendCamps.length - 6} more</div>}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ padding: "20px 16px", fontSize: 13, color: "#6B7280", textAlign: "center" }}>
+                              This profile is private.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             }
