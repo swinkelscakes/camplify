@@ -2409,8 +2409,8 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 <p style={{ margin: "0 0 16px" }}>To add a camp that isn't listed, click the Add Camp button at the top of the page. Or, send me the information, and I'll add it for you.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Sharing and circles</div>
-                <p style={{ margin: "0 0 6px" }}>If you'd like to share Camplify with friends outside this circle, you can create new circles and invite people to join.</p>
-                <p style={{ margin: "0 0 16px" }}>You can also add siblings and create or join circles for them.</p>
+                <p style={{ margin: "0 0 6px" }}>Please share Camplify with friends! You can invite them to your existing circles and/or create new circles.</p>
+                <p style={{ margin: "0 0 16px" }}>You can also add your other children and create or join circles for them.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Privacy</div>
                 <p style={{ margin: "0 0 16px" }}>Only people in your circles will be able to see your profile.</p>
@@ -2420,10 +2420,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                 <p style={{ margin: "0 0 16px" }}>Thanks again for being a Camplify early adopter :)</p>
 
-                <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 12, color: "#6B7280", fontSize: 13 }}>
-                  Simran Kagan<br />
-                  <a href="mailto:simran@simrandesign.com" style={{ color: "#3D6B1F", textDecoration: "none", fontWeight: 600 }}>simran@simrandesign.com</a><br />
-                  <a href="tel:+15852037400" style={{ color: "#6B7280", textDecoration: "none" }}>585.203.7400</a>
+                <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 12, color: "#6B7280", fontSize: 13, lineHeight: 1.7 }}>
+                  <div>Simran Kagan</div>
+                  <div><a href="mailto:simran@simrandesign.com" style={{ color: "#3D6B1F", textDecoration: "none", fontWeight: 600 }}>simran@simrandesign.com</a></div>
+                  <div><a href="tel:+15852037400" style={{ color: "#6B7280", textDecoration: "none" }}>585.203.7400</a></div>
                 </div>
               </div>
 
