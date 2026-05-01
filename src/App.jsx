@@ -1030,6 +1030,9 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   useEffect(() => {
     if (activeTab === "grid") {
       didInitialScrollRef.current = false;
+      // Also clear the DOM-level guard so the rAF inside the ref callback
+      // is allowed to scroll again on this fresh mount.
+      if (gridScrollRef.current) gridScrollRef.current.__camplifyDidScroll = false;
     }
   }, [activeTab]);
 
@@ -2962,8 +2965,15 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       }
 
                       // Scroll so the target week is the leftmost visible column.
-                      // COL_W = 148 + 8px margin = 156 per column.
-                      el.scrollLeft = targetIdx * (COL_W + 8);
+                      // COL_W = 148 + 8px margin = 156 per column. Defer into rAF
+                      // because the ref callback may fire before the inner content's
+                      // minWidth has been measured, leaving scrollLeft clamped to 0.
+                      requestAnimationFrame(() => {
+                        if (el && !el.__camplifyDidScroll) {
+                          el.scrollLeft = targetIdx * (COL_W + 8);
+                          el.__camplifyDidScroll = true;
+                        }
+                      });
                       didInitialScrollRef.current = true;
                     }}
                     style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}
@@ -5124,7 +5134,37 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               return m.child === kidName || m.child === kidFirstName || kidName.startsWith(m.child);
             }));
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
-            const kidEnrolledCamps = allCampPool.filter(c => campStatus[c.id]?.[profileKidId]);
+            // "Upcoming" = enrollments whose last attended day is today or later.
+            // Prefer the kid's actual enrolled weeks (last week's Friday) over
+            // the camp's overall window, so a kid enrolled only weeks 1–2 of an
+            // 8-week camp drops off the list once their last week passes.
+            const todayIso = (() => {
+              const d = new Date();
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, "0");
+              const day = String(d.getDate()).padStart(2, "0");
+              return `${y}-${m}-${day}`;
+            })();
+            const kidEnrolledCamps = allCampPool
+              .filter(c => campStatus[c.id]?.[profileKidId])
+              .filter(c => {
+                const s = campStatus[c.id]?.[profileKidId];
+                const enrolledWeeks = (s && typeof s === "object" && Array.isArray(s.weeks)) ? s.weeks : [];
+                let lastDayIso = "";
+                if (enrolledWeeks.length > 0) {
+                  const sorted = enrolledWeeks.slice().sort();
+                  const lastMon = new Date(sorted[sorted.length - 1] + "T12:00:00");
+                  const lastFri = new Date(lastMon); lastFri.setDate(lastFri.getDate() + 4);
+                  const y = lastFri.getFullYear();
+                  const m = String(lastFri.getMonth() + 1).padStart(2, "0");
+                  const dd = String(lastFri.getDate()).padStart(2, "0");
+                  lastDayIso = `${y}-${m}-${dd}`;
+                } else {
+                  lastDayIso = c.dateEnd || c.dateStart || "";
+                }
+                if (!lastDayIso) return true; // no date info → keep visible
+                return lastDayIso >= todayIso;
+              });
 
             if (loading) return (
               <div style={{ textAlign: "center", padding: "80px 20px" }}>
@@ -5569,7 +5609,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   {/* Enrolled camps summary */}
                   {kidEnrolledCamps.length > 0 && (
                     <div style={{ background: "white", border: "1px solid #E5E7EB", borderRadius: "var(--radius-xl)", padding: "20px", boxShadow: "var(--shadow-sm)" }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: "#1F2937", marginBottom: 14 }}>This Summer</div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: "#1F2937", marginBottom: 14 }}>Upcoming</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         {kidEnrolledCamps.map(c => {
                           const s = campStatus[c.id]?.[profileKidId];
@@ -5593,11 +5633,19 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               : `${fmt(firstMon)} – ${fmt(lastFri)}`;
                           }
                           return (
-                            <div key={c.id} style={{
-                              display: "flex", alignItems: "center", gap: 10,
-                              padding: "8px 12px", borderRadius: 8,
-                              background: statusBg, border: `1px solid ${statusColor}33`,
-                            }}>
+                            <button
+                              key={c.id}
+                              onClick={() => setEnrollModal({ campId: c.id, kidId: profileKidId, status: status || "enrolled" })}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 10,
+                                padding: "8px 12px", borderRadius: 8,
+                                background: statusBg, border: `1px solid ${statusColor}33`,
+                                width: "100%", cursor: "pointer", textAlign: "left",
+                                fontFamily: "Inter, sans-serif", transition: "filter 0.12s",
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.96)"}
+                              onMouseLeave={e => e.currentTarget.style.filter = "none"}
+                            >
                               <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontWeight: 600, fontSize: 13, color: "#1F2937" }}>{c.name}</div>
@@ -5606,7 +5654,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, flexShrink: 0 }}>
                                 {status === "enrolled" ? "✓ Enrolled" : status === "thinking" ? "Thinking" : "Waitlisted"}
                               </span>
-                            </div>
+                            </button>
                           );
                         })}
                       </div>
