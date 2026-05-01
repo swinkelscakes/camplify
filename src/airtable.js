@@ -888,6 +888,16 @@ export const deleteAccount = async (userId) => {
     // 4) Delete reviews
     if (myReviews.length > 0) await destroyBatched('Reviews', myReviews.map(r => r.id));
 
+    // Also clear out any Favorites I owned
+    try {
+      const myFavorites = await base('Favorites').select({
+        filterByFormula: `{OwnerUserId} = '${userId}'`,
+      }).all();
+      if (myFavorites.length > 0) await destroyBatched('Favorites', myFavorites.map(r => r.id));
+    } catch (e) {
+      console.warn('Failed to clean up Favorites:', e);
+    }
+
     // 5) Handle circles created by this user.
     // For each circle:
     //   - find OTHER members (not me)
@@ -958,4 +968,52 @@ export const deleteAccount = async (userId) => {
     console.error('deleteAccount failed:', e);
     return { ok: false, error: e.message || String(e) };
   }
+};
+
+
+// ── Favorites ("hearted" friend kids) ──────────────────────────────
+// A favorite is a per-user marking on a (TargetUserId, TargetChildName) pair.
+// Surfaces the favorited kid at the top of the Overview grid, just below
+// the user's own kids. Storage: Favorites table with fields:
+//   OwnerUserId (text)  — me
+//   TargetUserId (text) — the friend I'm hearting
+//   TargetChild (text)  — child name string (matches CircleMembers.ChildName)
+//   Created (date, optional)
+
+export const getFavorites = async (userId) => {
+  if (!userId) return [];
+  try {
+    const records = await base('Favorites').select({
+      filterByFormula: `{OwnerUserId} = '${userId}'`,
+    }).all();
+    return records.map(r => ({
+      id: r.id,
+      ownerUserId: r.fields.OwnerUserId || '',
+      targetUserId: r.fields.TargetUserId || '',
+      targetChild: r.fields.TargetChildName || '',
+    }));
+  } catch (e) {
+    console.error('Error loading favorites:', e);
+    return [];
+  }
+};
+
+export const addFavorite = async (ownerUserId, targetUserId, targetChild) => {
+  const record = await base('Favorites').create({
+    OwnerUserId: ownerUserId,
+    TargetUserId: targetUserId,
+    TargetChildName: targetChild || '',
+    // Created is a "Created time" field — Airtable populates it automatically,
+    // and writing to it would throw because it's read-only.
+  });
+  return {
+    id: record.id,
+    ownerUserId,
+    targetUserId,
+    targetChild: targetChild || '',
+  };
+};
+
+export const removeFavorite = async (favoriteId) => {
+  await base('Favorites').destroy(favoriteId);
 };

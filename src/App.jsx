@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -543,6 +543,38 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [breakIds, setBreakIds] = useState({});
   const [importantDates, setImportantDates] = useState([]); // [{ id, kidId, label, dateStart, dateEnd }]
   const [circleDates, setCircleDates] = useState([]); // [{ id, circleId, label, dateStart, dateEnd, createdBy }]
+  // Favorites: kids I've hearted. Each entry { id, targetUserId, targetChild }.
+  // Hearted friend kids float to the top of the Overview grid (right under
+  // my own kids). Lookup keyed by `${targetUserId}|${targetChild}`.
+  const [favorites, setFavorites] = useState([]);
+
+  // Toggle a heart on a friend's kid (targetUserId + targetChild). Optimistic
+  // update + Airtable round-trip; rolls back on failure. Skips no-op cases
+  // (favoriting myself, missing fields).
+  const toggleFavorite = async (targetUserId, targetChild) => {
+    if (!userId || !targetUserId || targetUserId === userId) return;
+    const existing = favorites.find(f => f.targetUserId === targetUserId && f.targetChild === (targetChild || ''));
+    if (existing) {
+      setFavorites(prev => prev.filter(f => f.id !== existing.id));
+      try { await removeFavorite(existing.id); }
+      catch (e) {
+        console.error('Unfavorite failed:', e);
+        setFavorites(prev => [...prev, existing]); // rollback
+      }
+      return;
+    }
+    // Optimistically add a placeholder; replace with real id once saved
+    const tempId = `temp-${Date.now()}`;
+    const optimistic = { id: tempId, ownerUserId: userId, targetUserId, targetChild: targetChild || '' };
+    setFavorites(prev => [...prev, optimistic]);
+    try {
+      const created = await addFavorite(userId, targetUserId, targetChild || '');
+      if (created) setFavorites(prev => prev.map(f => f.id === tempId ? created : f));
+    } catch (e) {
+      console.error('Favorite failed:', e);
+      setFavorites(prev => prev.filter(f => f.id !== tempId)); // rollback
+    }
+  };
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -565,6 +597,11 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
           setCircleDates(circleDatesData);
         } catch (e) { console.warn('Circle dates failed to load:', e); }
       }).catch(err => console.warn('Circles failed to load:', err));
+
+      // Favorites: which friend kids I've hearted. Doesn't affect anything
+      // crucial if it fails (just no hearts shown / sort), so it loads
+      // independently without blocking.
+      getFavorites(userId).then(setFavorites).catch(err => console.warn('Favorites failed to load:', err));
 
       // Load reviews independently so a review-table misconfiguration
       // (e.g. missing Reviews table in Airtable) doesn't break the rest
@@ -2586,6 +2623,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             ).filter((m, i, arr) =>
               arr.findIndex(x => x.userId === m.userId && x.child === m.child) === i
             );
+            // Lookup set of hearted (favorite) friend kids, keyed by `${userId}|${child}`.
+            // Hearted friends sort to the top of the friend rows; ties keep stable order.
+            const favoriteKeys = new Set(favorites.map(f => `${f.targetUserId}|${f.targetChild}`));
+            const friendRowsSorted = friendRows.slice().sort((a, b) => {
+              const aFav = favoriteKeys.has(`${a.userId}|${a.child}`);
+              const bFav = favoriteKeys.has(`${b.userId}|${b.child}`);
+              if (aFav && !bFav) return -1;
+              if (!aFav && bFav) return 1;
+              return 0;
+            });
 
             // Map each userId (friends + me) to the set of circles they belong to.
             // Used when rendering a row's red-letter circle-date markers, so a friend
@@ -2661,7 +2708,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const NAME_W = 130;
             const allRows = [
               ...myKidRows.map(k => ({ ...k, isMyKid: true })),
-              ...friendRows,
+              ...friendRowsSorted,
             ];
 
             const isMobile = window.innerWidth < 768;
@@ -2745,16 +2792,35 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               {person.isMyKid ? person.initials : getMemberInitials(person.child, person.name)}
                             </div>
                             {/* Name */}
-                            <div style={{ width: 90, flexShrink: 0 }}>
-                              <div onClick={() => { if (person.isMyKid) { setProfileKidId(person.id); setActiveTab("kids"); } else setFriendProfilePopover({ person, x: 20, y: 80 }); }}
-                                style={{ fontSize: 13, fontWeight: 700, color: person.isMyKid ? "#3D6B1F" : (person.circleColor || "#374151"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
-                                {person.isMyKid ? person.name : (person.child || person.name)}
-                              </div>
-                              {kidDatesThisWeek.length > 0 && (
-                                <div style={{ fontSize: 10, color: "#EF4444", fontWeight: 600, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  {kidDatesThisWeek.map(d => d.label).join(", ")}
+                            <div style={{ width: 110, flexShrink: 0, display: "flex", alignItems: "center", gap: 4 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div onClick={() => { if (person.isMyKid) { setProfileKidId(person.id); setActiveTab("kids"); } else setFriendProfilePopover({ person, x: 20, y: 80 }); }}
+                                  style={{ fontSize: 13, fontWeight: 700, color: person.isMyKid ? "#3D6B1F" : (person.circleColor || "#374151"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
+                                  {person.isMyKid ? person.name : (person.child || person.name)}
                                 </div>
-                              )}
+                                {kidDatesThisWeek.length > 0 && (
+                                  <div style={{ fontSize: 10, color: "#EF4444", fontWeight: 600, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {kidDatesThisWeek.map(d => d.label).join(", ")}
+                                  </div>
+                                )}
+                              </div>
+                              {!person.isMyKid && (() => {
+                                const favKey = `${person.userId}|${person.child}`;
+                                const isFav = favoriteKeys.has(favKey);
+                                return (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); toggleFavorite(person.userId, person.child); }}
+                                    title={isFav ? `Unfavorite ${person.child}` : `Favorite ${person.child} (sort to top)`}
+                                    style={{ background: "none", border: "none", padding: 2, cursor: "pointer", flexShrink: 0, lineHeight: 0, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", color: isFav ? "#EF4444" : "#9CA3AF", transition: "color 0.12s" }}
+                                    onMouseEnter={e => { if (!isFav) e.currentTarget.style.color = "#6B7280"; }}
+                                    onMouseLeave={e => { if (!isFav) e.currentTarget.style.color = "#9CA3AF"; }}
+                                  >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill={isFav ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                                    </svg>
+                                  </button>
+                                );
+                              })()}
                             </div>
                             {/* Camp cell */}
                             <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
@@ -2877,6 +2943,23 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               style={{ fontSize: 13, fontWeight: 700, color: person.isMyKid ? "#3D6B1F" : (person.circleColor || "#374151"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
                               {person.isMyKid ? person.name : (person.child || person.name)}
                             </span>
+                            {!person.isMyKid && (() => {
+                              const favKey = `${person.userId}|${person.child}`;
+                              const isFav = favoriteKeys.has(favKey);
+                              return (
+                                <button
+                                  onClick={e => { e.stopPropagation(); toggleFavorite(person.userId, person.child); }}
+                                  title={isFav ? `Unfavorite ${person.child}` : `Favorite ${person.child} (sort to top)`}
+                                  style={{ background: "none", border: "none", padding: 2, cursor: "pointer", flexShrink: 0, lineHeight: 0, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", color: isFav ? "#EF4444" : "#9CA3AF", transition: "color 0.12s" }}
+                                  onMouseEnter={e => { if (!isFav) e.currentTarget.style.color = "#6B7280"; }}
+                                  onMouseLeave={e => { if (!isFav) e.currentTarget.style.color = "#9CA3AF"; }}
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill={isFav ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                                  </svg>
+                                </button>
+                              );
+                            })()}
                           </div>
                           {isLastMyKid && friendRows.length > 0 && <div style={{ height: 2, background: "#E5E7EB" }} />}
                         </div>
@@ -3642,6 +3725,21 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               {person.circleName} · {person.name}
                             </div>
                           </div>
+                          {(() => {
+                            const favKey = `${person.userId}|${person.child}`;
+                            const isFav = favoriteKeys.has(favKey);
+                            return (
+                              <button
+                                onClick={() => toggleFavorite(person.userId, person.child)}
+                                title={isFav ? `Unfavorite ${person.child}` : `Favorite ${person.child} (sort to top)`}
+                                style={{ background: "none", border: "none", cursor: "pointer", padding: 4, flexShrink: 0, lineHeight: 0, color: isFav ? "#FEE2E2" : "rgba(255,255,255,0.85)" }}
+                              >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill={isFav ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                                </svg>
+                              </button>
+                            );
+                          })()}
                           <button onClick={() => setFriendProfilePopover(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.8)", fontSize: 20, lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
                         </div>
 
