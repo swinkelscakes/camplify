@@ -2833,7 +2833,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       const dayCamps = byWeek[w.num] || [];
                       const isBreak = dayCamps.length === 1 && dayCamps[0].__break;
                       const breakLabel = isBreak ? (dayCamps[0].label || "Break") : null;
-                      const camp = !isBreak ? dayCamps[0] : null;
+                      const nonBreakCamps = isBreak ? [] : dayCamps.filter(c => !c.__break);
+                      const enrolledCamp = nonBreakCamps.find(c => c.kidStatus === "enrolled");
+                      const thinkingCamps = nonBreakCamps.filter(c => c.kidStatus !== "enrolled");
+                      // Primary cell uses enrolled camp's status when present, otherwise
+                      // first thinking camp's status. Day-letter colors below derive from this.
+                      const camp = !isBreak ? (enrolledCamp || thinkingCamps[0] || null) : null;
                       const isLastMyKid = person.isMyKid && pi === myKidRows.length - 1;
                       const status = camp?.kidStatus || (camp ? "enrolled" : null);
                       let bg, textColor, border;
@@ -2888,41 +2893,75 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 );
                               })()}
                             </div>
-                            {/* Camp cell */}
-                            <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
-                              onClick={e => {
-                                if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, person, x: e.clientX, y: e.clientY });
-                                else if (isBreak && person.isMyKid) {
-                                  const nl = window.prompt(`Break label (or leave blank to remove "${breakLabel}"):`, breakLabel);
-                                  if (nl === null) return; // cancelled
-                                  if (nl.trim() === "") {
-                                    if (window.confirm(`Remove "${breakLabel}" break?`)) toggleKidWeekBreak(person.id, w.num);
-                                  } else {
-                                    setKidBreak(person.id, w.num, nl);
-                                  }
-                                }
-                                else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
-                              }}>
-                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px" }}>
-                                {isBreak && <span style={{ fontSize: 14 }}>🌿</span>}
-                                <span style={{ fontSize: 12, fontWeight: 700, color: textColor, textTransform: isBreak || camp ? "uppercase" : "none", letterSpacing: isBreak || camp ? "0.5px" : 0, textAlign: "center" }}>
-                                  {camp ? camp.name : isBreak ? breakLabel : person.isMyKid ? "+" : ""}
-                                </span>
-                              </div>
-                              <div style={{ display: "flex" }}>
-                                {allDays.map((day, i) => {
-                                  const dayDate = new Date(w.num + "T12:00:00"); dayDate.setDate(dayDate.getDate() + i);
-                                  const dayIso = toLocalIso(dayDate);
-                                  const holiday = weekHolidays.find(h => h.date === dayIso);
-                                  const impDate = kidDatesThisWeek.find(d => dayIso >= d.dateStart && dayIso <= (d.dateEnd || d.dateStart));
-                                  const isRed = holiday || impDate;
-                                  const campDays = camp?.days?.length > 0 ? camp.days : allDays;
-                                  const dayActive = camp ? campDays.includes(day) : isBreak;
-                                  const dayColor = isRed ? "#EF4444" : dayActive ? (textColor === "white" ? "rgba(255,255,255,0.7)" : `${textColor}99`) : (textColor === "white" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)");
-                                  return <div key={day} style={{ flex: 1, textAlign: "center", padding: "2px 0", fontSize: 8, fontWeight: 700, color: dayColor }}>{day}</div>;
-                                })}
-                              </div>
-                            </div>
+                            {/* Camp cell. When there's only one camp/break/empty, render
+                                a single chip. When there are multiple camps (e.g. one enrolled
+                                + multiple thinking, or multiple thinking), stack them in a
+                                column and let the cell grow taller. */}
+                            {(() => {
+                              const stackCamps = !isBreak && nonBreakCamps.length > 1;
+                              if (stackCamps) {
+                                // Multiple-camp stacked layout. Tap any chip to open its popover.
+                                const chips = enrolledCamp ? [enrolledCamp, ...thinkingCamps] : thinkingCamps;
+                                return (
+                                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {chips.map(c => {
+                                      const cStatus = c.kidStatus || "enrolled";
+                                      let cBg, cTextColor, cBorder;
+                                      if (cStatus === "enrolled")      { cBg = "#3D6B1F"; cTextColor = "white";   cBorder = "none"; }
+                                      else if (cStatus === "thinking") { cBg = "#FEF08A"; cTextColor = "#713F12"; cBorder = "1.5px solid #CA8A04"; }
+                                      else if (cStatus === "waitlist") { cBg = "#F3F4F6"; cTextColor = "#6B7280"; cBorder = "1.5px dashed #9CA3AF"; }
+                                      else                              { cBg = "white";   cTextColor = "#9CA3AF"; cBorder = "1.5px dashed #E5E7EB"; }
+                                      return (
+                                        <button key={c.id}
+                                          onClick={e => { e.stopPropagation(); setGridPopover({ camp: c, personName: person.isMyKid ? person.name : person.child, person, x: e.clientX, y: e.clientY }); }}
+                                          style={{ width: "100%", minHeight: 42, borderRadius: 8, background: cBg, border: cBorder, padding: "4px 8px", fontFamily: "Inter, sans-serif", display: "flex", flexDirection: "column", alignItems: "stretch", cursor: "pointer" }}>
+                                          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "2px 0" }}>
+                                            <span style={{ fontSize: 11, fontWeight: 700, color: cTextColor, textTransform: "uppercase", letterSpacing: "0.4px", textAlign: "center", lineHeight: 1.15 }}>{c.name}</span>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              }
+                              // Single-camp/break/empty layout (original behaviour)
+                              return (
+                                <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
+                                  onClick={e => {
+                                    if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, person, x: e.clientX, y: e.clientY });
+                                    else if (isBreak && person.isMyKid) {
+                                      const nl = window.prompt(`Break label (or leave blank to remove "${breakLabel}"):`, breakLabel);
+                                      if (nl === null) return;
+                                      if (nl.trim() === "") {
+                                        if (window.confirm(`Remove "${breakLabel}" break?`)) toggleKidWeekBreak(person.id, w.num);
+                                      } else {
+                                        setKidBreak(person.id, w.num, nl);
+                                      }
+                                    }
+                                    else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
+                                  }}>
+                                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px" }}>
+                                    {isBreak && <span style={{ fontSize: 14 }}>🌿</span>}
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: textColor, textTransform: isBreak || camp ? "uppercase" : "none", letterSpacing: isBreak || camp ? "0.5px" : 0, textAlign: "center" }}>
+                                      {camp ? camp.name : isBreak ? breakLabel : person.isMyKid ? "+" : ""}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex" }}>
+                                    {allDays.map((day, i) => {
+                                      const dayDate = new Date(w.num + "T12:00:00"); dayDate.setDate(dayDate.getDate() + i);
+                                      const dayIso = toLocalIso(dayDate);
+                                      const holiday = weekHolidays.find(h => h.date === dayIso);
+                                      const impDate = kidDatesThisWeek.find(d => dayIso >= d.dateStart && dayIso <= (d.dateEnd || d.dateStart));
+                                      const isRed = holiday || impDate;
+                                      const campDays = camp?.days?.length > 0 ? camp.days : allDays;
+                                      const dayActive = camp ? campDays.includes(day) : isBreak;
+                                      const dayColor = isRed ? "#EF4444" : dayActive ? (textColor === "white" ? "rgba(255,255,255,0.7)" : `${textColor}99`) : (textColor === "white" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)");
+                                      return <div key={day} style={{ flex: 1, textAlign: "center", padding: "2px 0", fontSize: 8, fontWeight: 700, color: dayColor }}>{day}</div>;
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       );
