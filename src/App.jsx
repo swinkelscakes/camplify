@@ -2409,25 +2409,25 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               {/* Welcome letter */}
               <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.6 }}>
                 <p style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 800, color: "#1F2937" }}>Camp is better with friends.</p>
-                <p style={{ margin: "0 0 12px" }}>But getting it right takes work — texting to compare schedules, screenshotting calendars, finding links.</p>
-                <p style={{ margin: "0 0 12px" }}>I built Camplify because I was tired of doing all of that in five different group chats.</p>
-                <p style={{ margin: "0 0 12px" }}>The idea: simplify the planning and amplify your kids' summer.</p>
-                <p style={{ margin: "0 0 16px" }}>A couple quick notes:</p>
+                <p style={{ margin: "0 0 12px" }}>But getting our kids into the same camps is tons of work: Texting to compare schedules, screenshotting calendars, searching for links and so on.</p>
+                <p style={{ margin: "0 0 12px" }}>I built Camplify because I was tired of doing that in five different group chats.</p>
+                <p style={{ margin: "0 0 12px", textDecoration: "underline" }}>The goal: Make it super easy to put our kids in camps with their friends.</p>
+                <p style={{ margin: "0 0 16px" }}>Quick notes:</p>
 
-                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Adding camps</div>
-                <p style={{ margin: "0 0 16px" }}>To add a camp that isn't listed, click the Add Camp button at the top of the page. Or, send me the information, and I'll add it for you.</p>
+                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Privacy</div>
+                <p style={{ margin: "0 0 16px" }}>Privacy is my #1 priority. Only people in your circles can see your kids&rsquo; schedules.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Sharing and circles</div>
                 <p style={{ margin: "0 0 6px" }}>Please share Camplify with friends! You can invite them to your existing circles and/or create new circles.</p>
                 <p style={{ margin: "0 0 16px" }}>You can also add your other children and create or join circles for them.</p>
 
-                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Privacy</div>
-                <p style={{ margin: "0 0 16px" }}>Only people in your circles will be able to see your profile.</p>
+                <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Adding camps</div>
+                <p style={{ margin: "0 0 16px" }}>To add a camp that isn't listed, click the Add Camp button at the top of the page. Or, send me the information, and I'll add it for you.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Feedback</div>
-                <p style={{ margin: "0 0 16px" }}>I welcome your feedback! Please send any suggestions for how Camplify can be more useful. And, if you see anything that isn't working properly, please let me know.</p>
+                <p style={{ margin: "0 0 16px" }}>I welcome feedback, and don&rsquo;t sugar-coat it! Please let me know how to make this app better for everyone.</p>
 
-                <p style={{ margin: "0 0 16px" }}>Thanks again for being a Camplify early adopter :)</p>
+                <p style={{ margin: "0 0 16px" }}>Thanks again for giving Camplify a try :)</p>
 
                 <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 12, color: "#6B7280", fontSize: 13, lineHeight: 1.7 }}>
                   <div>Simran Kagan</div>
