@@ -2412,7 +2412,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 <p style={{ margin: "0 0 12px" }}>But getting it right takes work — texting to compare schedules, screenshotting calendars, finding links.</p>
                 <p style={{ margin: "0 0 12px" }}>I built Camplify because I was tired of doing all of that in five different group chats.</p>
                 <p style={{ margin: "0 0 12px" }}>The idea: simplify the planning and amplify your kids' summer.</p>
-                <p style={{ margin: "0 0 16px" }}>To get started, add your first kid's profile.</p>
+                <p style={{ margin: "0 0 16px" }}>A couple quick notes:</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Adding camps</div>
                 <p style={{ margin: "0 0 16px" }}>To add a camp that isn't listed, click the Add Camp button at the top of the page. Or, send me the information, and I'll add it for you.</p>
