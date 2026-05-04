@@ -762,6 +762,9 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     if (airtableKids.length === 0) return;
     didOpenWizardRef.current = true;
     const firstKid = airtableKids[0];
+    // Start the parent-name input blank so users explicitly enter the name
+    // they want their circle to see (instead of inheriting their Clerk profile name).
+    setParentName("");
     setOnboardingWizard({ step: 0, kidId: firstKid.id, circleName: joinedCircleNameRef.current || "your circle" });
   }, [pendingInviteCode, loading, airtableKids]);
   const [selectedWeek, setSelectedWeek] = useState(3);
@@ -2289,11 +2292,11 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
               {wiz.step === 0 && (
                 <div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>What should your circle call you?</div>
-                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>This is how other parents in {wiz.circleName} will see your name.</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>What's your name?</div>
+                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>This is how other parents will see your name.</div>
                   <input autoFocus value={parentName} onChange={e => setParentName(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") saveStep1ParentName(); }}
-                    placeholder="e.g. Simran K."
+                    placeholder="e.g. Jane D."
                     style={{ width: "100%", padding: "12px 14px", border: "2px solid #E5E7EB", borderRadius: 10, fontSize: 15, fontWeight: 500, color: "#1F2937", outline: "none", marginBottom: 16 }}
                     onFocus={e => e.target.style.borderColor = "#3D6B1F"}
                     onBlur={e => e.target.style.borderColor = "#E5E7EB"} />
@@ -2357,7 +2360,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               {wiz.step === 3 && (
                 <div>
                   <div style={{ fontSize: 20, fontWeight: 700, color: "#1F2937", marginBottom: 8 }}>Share {kid.name}'s schedule with {wiz.circleName}?</div>
-                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>Members of your circle will be able to see which camps {kid.name} is signed up for or interested in. You can change this anytime.</div>
+                  <div style={{ fontSize: 13.5, color: "#6B7280", marginBottom: 20 }}>Only members of your circle will be able to see which camps {kid.name} is signed up for or interested in. You can change this anytime.</div>
                   <div style={{ background: "white", border: "1.5px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#1F2937" }}>Share {kid.name}'s camps</div>
@@ -5993,7 +5996,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     )}
                     {/* Join a circle by invite code */}
                     <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 14, marginTop: kidCircles.length > 0 ? 0 : 4 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>Have an invite code? Join a circle</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>Have an invite code? Join {kidCircles.length > 0 ? "another circle" : "a circle"}</div>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input
                           placeholder="Enter invite code"
