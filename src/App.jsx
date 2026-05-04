@@ -2387,6 +2387,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
         const dismiss = () => {
           try { window.localStorage.setItem(WELCOME_KEY, "1"); } catch {}
           setShowWelcome(false);
+          // If they don't have any kids yet, take them straight to the
+          // add-kid form. Otherwise leave their current tab alone.
+          if (airtableKids.length === 0) {
+            setActiveTab("kids");
+            setAddingKid(true);
+          }
         };
         return (
           <div
