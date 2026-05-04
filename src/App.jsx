@@ -396,7 +396,7 @@ function CirclePreviewGrid({ circle, camps, onSignUp }) {
               <div style={{ width: NAME_W, flexShrink: 0, borderRight: "1px solid #E5E7EB", background: "#F9FAFB" }}>
                 <div style={{ height: 44, borderBottom: "2px solid #E5E7EB" }} />
                 {members.map(m => (
-                  <div key={m.id} style={{ height: ROW_H, display: "flex", alignItems: "center", paddingLeft: 14, gap: 8, borderBottom: "1px solid #F0F0F0" }}>
+                  <div key={m.id} style={{ height: ROW_H, display: "flex", alignItems: "center", paddingLeft: 14, gap: 8, borderBottom: "1px solid #F0F0F0", boxSizing: "border-box", overflow: "hidden" }}>
                     <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0, background: circle.color || "#3D6B1F", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800 }}>
                       {getMemberInitials(m.child, m.name)}
                     </div>
@@ -467,7 +467,7 @@ function CirclePreviewGrid({ circle, camps, onSignUp }) {
                   {members.map(m => {
                     const byWeek = getMemberWeekCamps(m);
                     return (
-                      <div key={m.id} style={{ display: "flex", alignItems: "stretch", height: ROW_H, paddingTop: 6, paddingBottom: 6, borderBottom: "1px solid #F0F0F0" }}>
+                      <div key={m.id} style={{ display: "flex", alignItems: "stretch", height: ROW_H, paddingTop: 6, paddingBottom: 6, borderBottom: "1px solid #F0F0F0", boxSizing: "border-box", overflow: "hidden" }}>
                         {visibleWeeks.map(w => {
                           const cellCamps = byWeek[w.num] || [];
                           const isBreak = cellCamps.length === 1 && cellCamps[0].__break;
