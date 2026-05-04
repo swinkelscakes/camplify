@@ -3212,7 +3212,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       : "Get started by adding your kids in the My Kids tab, then browse and enroll in camps."}
                   </div>
                   <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                    <button onClick={() => setActiveTab("kids")} style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>+ Add a Kid</button>
+                    <button onClick={() => { setActiveTab("kids"); setAddingKid(true); }} style={{ background: "#3D6B1F", border: "none", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>+ Add a Kid</button>
                     {!pendingInviteCode && (
                       <button onClick={() => setActiveTab("circles")} style={{ background: "white", border: "1.5px solid #E5E7EB", borderRadius: 10, padding: "10px 20px", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 700, color: "#374151", cursor: "pointer" }}>Join a Circle</button>
                     )}
