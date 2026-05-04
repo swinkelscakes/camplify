@@ -509,6 +509,79 @@ export const updateCircleMemberKid = async (userId, childName) => {
   }
 };
 
+// Leave a circle (delete my CircleMembers row for this circle).
+// If I'm the only member, the circle is deleted entirely along with its
+// CircleDates. If I'm the CreatedBy but not the only member, ownership is
+// transferred to the next-oldest remaining member so the circle persists.
+// Returns { deletedCircle: boolean }.
+export const leaveCircle = async (userId, circleId) => {
+  // 1) Find my membership row(s) in this circle. There should only be one,
+  //    but defensively handle duplicates.
+  const myMemberships = await base('CircleMembers').select({
+    filterByFormula: `AND({UserId} = '${userId}', FIND('${circleId}', ARRAYJOIN({Circle})) > 0)`
+  }).all().catch(() => []);
+
+  // 2) Get all members of this circle to determine if I'm the last one.
+  const allMembers = await base('CircleMembers').select({
+    filterByFormula: `FIND('${circleId}', ARRAYJOIN({Circle})) > 0`
+  }).all().catch(() => []);
+
+  const otherMembers = allMembers.filter(m => m.fields.UserId !== userId);
+
+  // 3) Fetch the circle to check CreatedBy
+  const circleRec = await base('Circles').find(circleId).catch(() => null);
+  const isCreator = circleRec && circleRec.fields.CreatedBy === userId;
+
+  // 4) If I'm the only member, delete the whole circle and its dates.
+  if (otherMembers.length === 0) {
+    // Delete CircleDates for this circle first
+    try {
+      const circleDates = await base('CircleDates').select({
+        filterByFormula: `FIND('${circleId}', ARRAYJOIN({Circle})) > 0`
+      }).all();
+      for (const d of circleDates) {
+        await base('CircleDates').destroy(d.id);
+      }
+    } catch (e) {
+      console.warn('Failed to clean up CircleDates while leaving circle:', e);
+    }
+    // Delete my membership(s)
+    for (const m of myMemberships) {
+      await base('CircleMembers').destroy(m.id).catch(() => {});
+    }
+    // Delete the circle itself
+    if (circleRec) await base('Circles').destroy(circleId).catch(() => {});
+    return { deletedCircle: true };
+  }
+
+  // 5) Otherwise — there are other members. If I created this circle,
+  //    transfer ownership to the oldest remaining member (by Joined date,
+  //    falling back to record id order).
+  if (isCreator) {
+    const sorted = otherMembers.slice().sort((a, b) => {
+      const ja = a.fields.Joined || '';
+      const jb = b.fields.Joined || '';
+      if (ja && jb) return ja.localeCompare(jb);
+      if (ja) return -1;
+      if (jb) return 1;
+      return 0;
+    });
+    const newOwner = sorted[0];
+    if (newOwner && newOwner.fields.UserId) {
+      await base('Circles').update(circleId, {
+        CreatedBy: newOwner.fields.UserId,
+      }).catch(e => console.warn('Failed to transfer CreatedBy:', e));
+    }
+  }
+
+  // 6) Delete my membership row(s)
+  for (const m of myMemberships) {
+    await base('CircleMembers').destroy(m.id).catch(() => {});
+  }
+
+  return { deletedCircle: false };
+};
+
 // Update parent name in all CircleMembers records for this user
 export const updateParentName = async (userId, parentName) => {
   try {

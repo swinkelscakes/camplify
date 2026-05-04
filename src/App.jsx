@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite, leaveCircle } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -6456,6 +6456,39 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               <button className="invite-cancel" onClick={() => { setInviteCircleId(null); }}>Done</button>
                             </div>
                           )}
+                          {/* Leave circle */}
+                          <div style={{ borderTop: "1px solid #F3F4F6", marginTop: 16, paddingTop: 14, display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              onClick={async () => {
+                                const otherMembers = (circle.members || []).filter(m => m.userId !== userId);
+                                const isLast = otherMembers.length === 0;
+                                const msg = isLast
+                                  ? `Leave "${circle.name}"? You're the only member, so this will permanently delete the circle and any of its dates. This can't be undone.`
+                                  : `Leave "${circle.name}"? You won't see members' camps and they won't see yours.`;
+                                if (!window.confirm(msg)) return;
+                                try {
+                                  await leaveCircle(userId, circle.id);
+                                  // Refresh circles list
+                                  const fresh = await getCircles(userId);
+                                  setAirtableCircles(fresh);
+                                  setExpandedMember(null);
+                                } catch (e) {
+                                  console.error('Leave circle failed:', e);
+                                  alert('Could not leave the circle. Please try again.');
+                                }
+                              }}
+                              style={{
+                                background: "none", border: "1.5px solid #FCA5A5", borderRadius: 8,
+                                padding: "7px 14px", fontFamily: "Inter, sans-serif",
+                                fontSize: 12.5, fontWeight: 600, color: "#DC2626", cursor: "pointer",
+                                transition: "background 0.12s",
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
+                              onMouseLeave={e => e.currentTarget.style.background = "none"}
+                            >
+                              Leave circle
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
