@@ -2398,12 +2398,12 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               style={{ background: "white", borderRadius: 16, padding: "28px 28px 22px", maxWidth: 520, width: "100%", maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.25)" }}
             >
               {/* Welcome letter */}
-              <div style={{ fontSize: 22, fontWeight: 800, color: "#3D6B1F", marginBottom: 16 }}>
-                Welcome!
-              </div>
               <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.6 }}>
-                <p style={{ margin: "0 0 12px" }}>Thanks for trying Camplify!</p>
-                <p style={{ margin: "0 0 16px" }}>To get started, add your first kid's profile. Then, start adding their camps.</p>
+                <p style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 800, color: "#1F2937" }}>Camp is better with friends.</p>
+                <p style={{ margin: "0 0 12px" }}>But getting it right takes work — texting to compare schedules, screenshotting calendars, finding links.</p>
+                <p style={{ margin: "0 0 12px" }}>I built Camplify because I was tired of doing all of that in five different group chats.</p>
+                <p style={{ margin: "0 0 12px" }}>The idea: simplify the planning and amplify your kids' summer.</p>
+                <p style={{ margin: "0 0 16px" }}>To get started, add your first kid's profile.</p>
 
                 <div style={{ fontWeight: 700, color: "#1F2937", marginBottom: 4 }}>Adding camps</div>
                 <p style={{ margin: "0 0 16px" }}>To add a camp that isn't listed, click the Add Camp button at the top of the page. Or, send me the information, and I'll add it for you.</p>
