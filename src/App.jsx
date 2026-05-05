@@ -1141,6 +1141,75 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     return weeks;
   })();
 
+  // Desktop counterpart: scroll the grid container so the week before the
+  // next upcoming enrolled camp is the leftmost visible column. Always
+  // re-fires when the user lands on Overview so it stays accurate.
+  useEffect(() => {
+    if (activeTab !== "grid") return;
+    if (!visibleWeeks || visibleWeeks.length === 0) return;
+    if (typeof window === "undefined" || window.innerWidth < 768) return; // mobile uses pager above
+    const todayIso = (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    })();
+    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+    let nextCampStart = null;
+    // Priority 1: my own kids' enrolled camps
+    airtableKids.forEach(k => {
+      allCampPool.forEach(camp => {
+        const s = campStatus[camp.id]?.[k.id];
+        if (!s) return;
+        const statusVal = typeof s === "string" ? s : s?.status;
+        if (statusVal !== "enrolled") return;
+        const end = camp.dateEnd || camp.dateStart;
+        if (!camp.dateStart || !end || end < todayIso) return;
+        if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+      });
+    });
+    // Priority 2: any circle member's enrolled camp
+    if (!nextCampStart && airtableCircles && airtableCircles.length > 0) {
+      airtableCircles.forEach(c => {
+        (c.members || []).forEach(m => {
+          (m.camps || []).forEach(cid => {
+            const camp = allCampPool.find(c2 => c2.id === cid);
+            if (!camp) return;
+            const status = m.campStatus?.[cid] || 'enrolled';
+            if (status !== 'enrolled') return;
+            const end = camp.dateEnd || camp.dateStart;
+            if (!camp.dateStart || !end || end < todayIso) return;
+            if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+          });
+        });
+      });
+    }
+    if (!nextCampStart) return; // nothing upcoming → leave grid where it is
+    const targetMonday = (() => {
+      const d = new Date(nextCampStart + "T12:00:00");
+      const dow = d.getDay();
+      d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+      d.setDate(d.getDate() - 7);
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, "0");
+      const da = String(d.getDate()).padStart(2, "0");
+      return `${y}-${mo}-${da}`;
+    })();
+    const idx = visibleWeeks.findIndex(w => w.num === targetMonday);
+    if (idx <= 0) return;
+    const COL_W = 148;
+    // Defer into rAF so the scrollable container has fully laid out.
+    // The grid mounts/unmounts when the tab toggles, and on first paint the
+    // inner content's minWidth may not yet be measured, which would clamp
+    // scrollLeft to 0. rAF ensures layout has settled.
+    requestAnimationFrame(() => {
+      if (gridScrollRef.current) {
+        gridScrollRef.current.scrollLeft = idx * (COL_W + 8);
+      }
+    });
+  }, [activeTab, airtableKids, airtableCircles, camps, airtableCamps, dynamicCamps, campStatus, visibleWeeks]);
+
   // Mobile mirror of the desktop auto-scroll: when activeTab is the Overview
   // grid, set the mobile week pager to the week BEFORE the user's (or their
   // circle members') next upcoming enrolled camp. Re-fires every time the
@@ -4687,10 +4756,71 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                               })}
                                             </div>
                                           </div>
-                                          <div style={{display:"flex",gap:8}}>
-                                            <div style={{flex:1}}>{lbl("Age/Grade Min")}<input style={inStyle} value={ef.ageMin||ef.gradeMin||""} onChange={e=>upd(ef.gradeMin?"gradeMin":"ageMin",e.target.value)} /></div>
-                                            <div style={{flex:1}}>{lbl("Age/Grade Max")}<input style={inStyle} value={ef.ageMax||ef.gradeMax||""} onChange={e=>upd(ef.gradeMax?"gradeMax":"ageMax",e.target.value)} /></div>
-                                          </div>
+                                          {(() => {
+                                            // Decide which axis to show: prefer the one with existing
+                                            // data; otherwise show whichever the user toggled to.
+                                            const axis = ef.ageOrGrade
+                                              || (ef.gradeMin || ef.gradeMax ? "grade" : "age");
+                                            const setAxis = (val) => {
+                                              // Switching axes clears the other side so we don't end up
+                                              // saving both age and grade bounds (which the filter logic
+                                              // doesn't expect).
+                                              if (val === "age") {
+                                                upd("ageOrGrade", "age");
+                                                setEditForm(prev => ({ ...prev, ageOrGrade: "age", gradeMin: "", gradeMax: "" }));
+                                              } else {
+                                                upd("ageOrGrade", "grade");
+                                                setEditForm(prev => ({ ...prev, ageOrGrade: "grade", ageMin: "", ageMax: "" }));
+                                              }
+                                            };
+                                            const AGES = Array.from({ length: 14 }, (_, i) => i + 3); // 3..16
+                                            return (
+                                              <div>
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                                                  {lbl("Age or Grade range")}
+                                                  <div style={{ display: "flex", gap: 4, background: "#F3F4F6", borderRadius: 7, padding: 2 }}>
+                                                    {[["age","Age"],["grade","Grade"]].map(([val, label]) => (
+                                                      <button key={val} onClick={() => setAxis(val)}
+                                                        style={{
+                                                          background: axis === val ? "white" : "transparent",
+                                                          border: "none", borderRadius: 5, padding: "3px 10px",
+                                                          fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 600,
+                                                          color: axis === val ? "#1F2937" : "#9CA3AF", cursor: "pointer",
+                                                          boxShadow: axis === val ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                                                        }}>{label}</button>
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                                  {axis === "age" ? (
+                                                    <>
+                                                      <select style={selStyle} value={ef.ageMin || ""} onChange={e => upd("ageMin", e.target.value)}>
+                                                        <option value="">Min age</option>
+                                                        {AGES.map(a => <option key={a} value={a}>{a}</option>)}
+                                                      </select>
+                                                      <span style={{ color: "#9CA3AF", flexShrink: 0 }}>to</span>
+                                                      <select style={selStyle} value={ef.ageMax || ""} onChange={e => upd("ageMax", e.target.value)}>
+                                                        <option value="">Max age</option>
+                                                        {AGES.map(a => <option key={a} value={a}>{a}</option>)}
+                                                      </select>
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <select style={selStyle} value={ef.gradeMin || ""} onChange={e => upd("gradeMin", e.target.value)}>
+                                                        <option value="">Min grade</option>
+                                                        {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                                                      </select>
+                                                      <span style={{ color: "#9CA3AF", flexShrink: 0 }}>to</span>
+                                                      <select style={selStyle} value={ef.gradeMax || ""} onChange={e => upd("gradeMax", e.target.value)}>
+                                                        <option value="">Max grade</option>
+                                                        {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                                                      </select>
+                                                    </>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
                                           <div>{lbl("Neighborhood / City")}<input style={inStyle} value={ef.location||""} onChange={e=>upd("location",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
                                           <div>{lbl("Address")}<input style={inStyle} value={ef.address||""} onChange={e=>upd("address",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
                                           <div>{lbl("Website URL")}<input style={inStyle} value={ef.url||""} onChange={e=>upd("url",e.target.value)} onFocus={e=>e.target.style.borderColor="#3D6B1F"} onBlur={e=>e.target.style.borderColor="#E5E7EB"} /></div>
