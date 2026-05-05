@@ -713,6 +713,7 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     try { return window.localStorage.getItem(WELCOME_KEY) !== "1"; }
     catch { return true; }
   });
+  const [showHelpPopover, setShowHelpPopover] = useState(false);
   // Circle-level date editor state (shared across circles — only one open at a time)
   const [circleDateCircleId, setCircleDateCircleId] = useState(null); // which circle is editing
   const [circleDateEditId, setCircleDateEditId] = useState(null); // which existing date is being edited (null = adding new)
@@ -7478,6 +7479,90 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             </>
           )}
         </main>
+
+        {/* ── HELP / QUESTIONS FOOTER ──
+            Subtle link at the bottom of every page. Opens a small popover
+            with email and text options for direct contact. */}
+        <footer style={{
+          textAlign: "center", padding: "20px 16px 32px",
+          fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#9CA3AF",
+          position: "relative",
+        }}>
+          <button
+            onClick={() => setShowHelpPopover(v => !v)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#6B7280",
+              fontWeight: 600, padding: "4px 8px",
+              textDecoration: "underline", textDecorationStyle: "dotted",
+              textUnderlineOffset: 3,
+            }}
+          >
+            Questions/feedback? Contact Simran
+          </button>
+
+          {showHelpPopover && (
+            <>
+              {/* Backdrop to catch clicks-outside */}
+              <div
+                onClick={() => setShowHelpPopover(false)}
+                style={{ position: "fixed", inset: 0, zIndex: 80 }}
+              />
+              <div
+                style={{
+                  position: "absolute", bottom: 56, left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "white", borderRadius: 12,
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.08)",
+                  border: "1px solid #E5E7EB", padding: "16px",
+                  minWidth: 260, zIndex: 81,
+                  fontFamily: "Inter, sans-serif",
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1F2937", marginBottom: 4, textAlign: "left" }}>
+                  How can I help?
+                </div>
+                <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 12, textAlign: "left", lineHeight: 1.4 }}>
+                  Send me a quick note — I'll get back to you.
+                </div>
+                <a
+                  href="mailto:simran@simrandesign.com"
+                  onClick={() => setShowHelpPopover(false)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "10px 12px", borderRadius: 8,
+                    background: "#F9FAFB", border: "1px solid #F3F4F6",
+                    textDecoration: "none", color: "#1F2937",
+                    marginBottom: 8, fontSize: 13, fontWeight: 600,
+                    transition: "background 0.12s",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#eef5e8"}
+                  onMouseLeave={e => e.currentTarget.style.background = "#F9FAFB"}
+                >
+                  <span style={{ fontSize: 16 }}>✉️</span>
+                  <span>Email simran@simrandesign.com</span>
+                </a>
+                <a
+                  href="sms:+15852037400"
+                  onClick={() => setShowHelpPopover(false)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "10px 12px", borderRadius: 8,
+                    background: "#F9FAFB", border: "1px solid #F3F4F6",
+                    textDecoration: "none", color: "#1F2937",
+                    fontSize: 13, fontWeight: 600,
+                    transition: "background 0.12s",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#eef5e8"}
+                  onMouseLeave={e => e.currentTarget.style.background = "#F9FAFB"}
+                >
+                  <span style={{ fontSize: 16 }}>💬</span>
+                  <span>Text 585.203.7400</span>
+                </a>
+              </div>
+            </>
+          )}
+        </footer>
 
         {/* ── STATUS BOTTOM SHEET ── */}
         {openPicker && (
