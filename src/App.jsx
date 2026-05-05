@@ -1037,17 +1037,32 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       campType: Array.isArray(manualForm.campType) ? manualForm.campType : (manualForm.campType ? [manualForm.campType] : []),
     };
     setDynamicCamps(prev => [...prev, newCamp]);
-    // Save to Airtable in background — capture manualForm before it's reset
+    // Save to Airtable. Show success only after the write actually resolves;
+    // if it fails, roll back the optimistic camp and surface the error so the
+    // user knows their data didn't persist.
     const formSnapshot = { ...manualForm };
+    setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", beforeCareCost: "", afterCareStart: "", afterCareEnd: "", afterCareCost: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
     saveCamp(userId, formSnapshot).then(savedId => {
       if (savedId) {
-        setDynamicCamps(prev => prev.map(c => c.id === id ? { ...c, id: savedId } : c));
+        // Move the camp out of dynamicCamps and into airtableCamps so it only
+        // lives in one place. Leaving it in both was making it render twice
+        // until the next page reload re-fetched from Airtable cleanly.
+        setDynamicCamps(prev => prev.filter(c => c.id !== id));
         setAirtableCamps(prev => [...prev, { ...newCamp, id: savedId, userId }]);
+        setImportDone(true);
+        setTimeout(() => { setImportDone(false); setActiveTab("camps"); }, 1800);
+      } else {
+        // saveCamp returned no id — treat as failure
+        setDynamicCamps(prev => prev.filter(c => c.id !== id));
+        alert("Sorry, the camp couldn't be saved. Please try again, or check that all required fields are filled in.");
       }
-    }).catch(e => console.error('saveCamp error:', e));
-    setManualForm({ name: "", dateStart: "", dateEnd: "", location: "", address: "", timeStart: "", timeEnd: "", beforeCareStart: "", beforeCareEnd: "", beforeCareCost: "", afterCareStart: "", afterCareEnd: "", afterCareCost: "", url: "", discountCode: "", notes: "", days: [], ageMin: "", ageMax: "", gradeMin: "", gradeMax: "", ageOrGrade: "age", cost: "", campType: "" });
-    setImportDone(true);
-    setTimeout(() => { setImportDone(false); setActiveTab("camps"); }, 1800);
+    }).catch(e => {
+      console.error('saveCamp error:', e);
+      // Roll back the optimistic camp and warn the user.
+      setDynamicCamps(prev => prev.filter(c => c.id !== id));
+      const detail = (e && e.message) ? `\n\n(${e.message})` : "";
+      alert(`Sorry, the camp couldn't be saved. Please try again.${detail}`);
+    });
   };
   const [emailText, setEmailText] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -4242,32 +4257,46 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
             return (
               <div>
-                {/* Filters row */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1 }}>
-                    <button
-                      onClick={() => setCampTypeFilter(null)}
+                {/* Filters row 1: type chips. Horizontally scroll on overflow
+                    instead of wrapping to multiple lines, which kept making the
+                    page feel cluttered. */}
+                <div className="camp-type-chips" style={{
+                  display: "flex", gap: 6, marginBottom: 10,
+                  overflowX: "auto", paddingBottom: 4,
+                  scrollbarWidth: "none", msOverflowStyle: "none",
+                }}>
+                  <style>{`
+                    .camp-type-chips::-webkit-scrollbar { display: none; }
+                  `}</style>
+                  <button
+                    onClick={() => setCampTypeFilter(new Set())}
+                    style={{
+                      background: campTypeFilter.size === 0 ? "#3D6B1F" : "white",
+                      color: campTypeFilter.size === 0 ? "white" : "#6B7280",
+                      border: `1.5px solid ${campTypeFilter.size === 0 ? "#3D6B1F" : "#E5E7EB"}`,
+                      borderRadius: 7, padding: "5px 12px",
+                      fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                      whiteSpace: "nowrap", flexShrink: 0,
+                    }}
+                  >All</button>
+                  {allTypes.map(t => (
+                    <button key={t}
+                      onClick={() => setCampTypeFilter(prev => { const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next; })}
                       style={{
-                        background: !campTypeFilter ? "#3D6B1F" : "white",
-                        color: !campTypeFilter ? "white" : "#6B7280",
-                        border: `1.5px solid ${!campTypeFilter ? "#3D6B1F" : "#E5E7EB"}`,
+                        background: campTypeFilter.has(t) ? "#3D6B1F" : "white",
+                        color: campTypeFilter.has(t) ? "white" : "#6B7280",
+                        border: `1.5px solid ${campTypeFilter.has(t) ? "#3D6B1F" : "#E5E7EB"}`,
                         borderRadius: 7, padding: "5px 12px",
                         fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                        whiteSpace: "nowrap", flexShrink: 0,
                       }}
-                    >All</button>
-                    {allTypes.map(t => (
-                      <button key={t}
-                        onClick={() => setCampTypeFilter(prev => { const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next; })}
-                        style={{
-                          background: campTypeFilter.has(t) ? "#3D6B1F" : "white",
-                          color: campTypeFilter.has(t) ? "white" : "#6B7280",
-                          border: `1.5px solid ${campTypeFilter.has(t) ? "#3D6B1F" : "#E5E7EB"}`,
-                          borderRadius: 7, padding: "5px 12px",
-                          fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                        }}
-                      >{TYPE_CONFIG[t].emoji} {TYPE_CONFIG[t].label}</button>
-                    ))}
-                  </div>
+                    >{TYPE_CONFIG[t].emoji} {TYPE_CONFIG[t].label}</button>
+                  ))}
+                </div>
+
+                {/* Filters row 2: age/grade dropdown on the left, sort toggle on
+                    the right. Always on one line. */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
                   {/* Age/Grade filter */}
                   <div style={{ position: "relative", display: "inline-block" }}>
                     <select
