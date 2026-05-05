@@ -258,30 +258,34 @@ export const deleteBreak = async (breakId) => {
 
 // Update an existing camp
 export const updateCamp = async (campId, fields) => {
+  // Helper: empty strings become null so Airtable clears the cell
+  // instead of rejecting the write (single-select fields, dates, and
+  // numbers all reject "" as an invalid value).
+  const norm = (v) => (v === "" || v === undefined ? null : v);
   const airtableFields = {};
-  if (fields.name !== undefined) airtableFields.Name = fields.name;
-  if (fields.dateStart !== undefined) airtableFields.DateStart = fields.dateStart;
-  if (fields.dateEnd !== undefined) airtableFields.DateEnd = fields.dateEnd;
-  if (fields.location !== undefined) airtableFields.Location = fields.location;
-  if (fields.address !== undefined) airtableFields.Address = fields.address;
-  if (fields.timeStart !== undefined) airtableFields.TimeStart = fields.timeStart;
-  if (fields.timeEnd !== undefined) airtableFields.TimeEnd = fields.timeEnd;
-  if (fields.beforeCareStart !== undefined) airtableFields.BeforeCareStart = fields.beforeCareStart;
-  if (fields.beforeCareEnd !== undefined) airtableFields.BeforeCareEnd = fields.beforeCareEnd;
+  if (fields.name !== undefined) airtableFields.Name = norm(fields.name);
+  if (fields.dateStart !== undefined) airtableFields.DateStart = norm(fields.dateStart);
+  if (fields.dateEnd !== undefined) airtableFields.DateEnd = norm(fields.dateEnd);
+  if (fields.location !== undefined) airtableFields.Location = norm(fields.location);
+  if (fields.address !== undefined) airtableFields.Address = norm(fields.address);
+  if (fields.timeStart !== undefined) airtableFields.TimeStart = norm(fields.timeStart);
+  if (fields.timeEnd !== undefined) airtableFields.TimeEnd = norm(fields.timeEnd);
+  if (fields.beforeCareStart !== undefined) airtableFields.BeforeCareStart = norm(fields.beforeCareStart);
+  if (fields.beforeCareEnd !== undefined) airtableFields.BeforeCareEnd = norm(fields.beforeCareEnd);
   if (fields.beforeCareCost !== undefined) airtableFields['BeforeCare Cost'] = fields.beforeCareCost ? Number(fields.beforeCareCost) : null;
-  if (fields.afterCareStart !== undefined) airtableFields.AfterCareStart = fields.afterCareStart;
-  if (fields.afterCareEnd !== undefined) airtableFields.AfterCareEnd = fields.afterCareEnd;
+  if (fields.afterCareStart !== undefined) airtableFields.AfterCareStart = norm(fields.afterCareStart);
+  if (fields.afterCareEnd !== undefined) airtableFields.AfterCareEnd = norm(fields.afterCareEnd);
   if (fields.afterCareCost !== undefined) airtableFields['AfterCare Cost'] = fields.afterCareCost ? Number(fields.afterCareCost) : null;
   if (fields.campType !== undefined) airtableFields.Type = Array.isArray(fields.campType) ? fields.campType.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).map(t => t === 'Stem' ? 'STEM' : t) : [];
   if (fields.days !== undefined) airtableFields.Days = fields.days;
   if (fields.ageMin !== undefined) airtableFields.AgeMin = fields.ageMin ? Number(fields.ageMin) : null;
   if (fields.ageMax !== undefined) airtableFields.AgeMax = fields.ageMax ? Number(fields.ageMax) : null;
-  if (fields.gradeMin !== undefined) airtableFields.GradeMin = fields.gradeMin;
-  if (fields.gradeMax !== undefined) airtableFields.GradeMax = fields.gradeMax;
+  if (fields.gradeMin !== undefined) airtableFields.GradeMin = norm(fields.gradeMin);
+  if (fields.gradeMax !== undefined) airtableFields.GradeMax = norm(fields.gradeMax);
   if (fields.cost !== undefined) airtableFields.Cost = fields.cost ? Number(fields.cost) : null;
-  if (fields.url !== undefined) airtableFields.URL = fields.url;
-  if (fields.notes !== undefined) airtableFields.Notes = fields.notes;
-  if (fields.discountCode !== undefined) airtableFields.DiscountCode = fields.discountCode;
+  if (fields.url !== undefined) airtableFields.URL = norm(fields.url);
+  if (fields.notes !== undefined) airtableFields.Notes = norm(fields.notes);
+  if (fields.discountCode !== undefined) airtableFields.DiscountCode = norm(fields.discountCode);
   await base('Camps').update(campId, airtableFields);
 };
 
