@@ -4835,11 +4835,68 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                                       <button
                                         onClick={async () => {
-                                          console.log('Saving camp:', camp.id, editForm);
-                                          const result = await updateCamp(camp.id, editForm).catch(e => console.error('updateCamp error:', e));
-                                          console.log('updateCamp result:', result);
-                                          // Update local camp data
-                                          const getMon = (ds) => { const d = new Date(ds+"T12:00:00"); const dow=d.getDay(); d.setDate(d.getDate()-(dow===0?6:dow-1)); return d.toISOString().slice(0,10); };
+                                          // Compute diff: only send fields the user actually changed.
+                                          // The form pre-fills empty strings for missing values, and
+                                          // updateCamp writes any !== undefined field to Airtable —
+                                          // sending those empty strings would wipe the camp's real
+                                          // data on every save. Comparing against the original camp
+                                          // avoids that.
+                                          const origHoursStart = camp.hours ? camp.hours.split(" - ")[0] : "";
+                                          const origHoursEnd = camp.hours ? camp.hours.split(" - ")[1] : "";
+                                          const origBeforeStart = camp.beforeCare ? camp.beforeCare.split(" - ")[0] : "";
+                                          const origBeforeEnd = camp.beforeCare ? camp.beforeCare.split(" - ")[1] : "";
+                                          const origAfterStart = camp.afterCare ? camp.afterCare.split(" - ")[0] : "";
+                                          const origAfterEnd = camp.afterCare ? camp.afterCare.split(" - ")[1] : "";
+                                          const origCampType = Array.isArray(camp.campType) ? camp.campType : (camp.campType ? [camp.campType] : []);
+                                          const sameStr = (a, b) => (a || "") === (b || "");
+                                          const sameNum = (a, b) => {
+                                            const av = a === "" || a == null ? null : Number(a);
+                                            const bv = b === "" || b == null ? null : Number(b);
+                                            return av === bv;
+                                          };
+                                          const sameArr = (a, b) => {
+                                            const aa = Array.isArray(a) ? a : [];
+                                            const bb = Array.isArray(b) ? b : [];
+                                            if (aa.length !== bb.length) return false;
+                                            const sa = aa.slice().sort();
+                                            const sb = bb.slice().sort();
+                                            return sa.every((v, i) => v === sb[i]);
+                                          };
+                                          const diff = {};
+                                          if (!sameStr(editForm.name, camp.name)) diff.name = editForm.name;
+                                          if (!sameStr(editForm.dateStart, camp.dateStart)) diff.dateStart = editForm.dateStart;
+                                          if (!sameStr(editForm.dateEnd, camp.dateEnd)) diff.dateEnd = editForm.dateEnd;
+                                          if (!sameStr(editForm.timeStart, origHoursStart)) diff.timeStart = editForm.timeStart;
+                                          if (!sameStr(editForm.timeEnd, origHoursEnd)) diff.timeEnd = editForm.timeEnd;
+                                          if (!sameStr(editForm.beforeCareStart, origBeforeStart)) diff.beforeCareStart = editForm.beforeCareStart;
+                                          if (!sameStr(editForm.beforeCareEnd, origBeforeEnd)) diff.beforeCareEnd = editForm.beforeCareEnd;
+                                          if (!sameNum(editForm.beforeCareCost, camp.beforeCareCost)) diff.beforeCareCost = editForm.beforeCareCost;
+                                          if (!sameStr(editForm.afterCareStart, origAfterStart)) diff.afterCareStart = editForm.afterCareStart;
+                                          if (!sameStr(editForm.afterCareEnd, origAfterEnd)) diff.afterCareEnd = editForm.afterCareEnd;
+                                          if (!sameNum(editForm.afterCareCost, camp.afterCareCost)) diff.afterCareCost = editForm.afterCareCost;
+                                          if (!sameArr(editForm.days, camp.days)) diff.days = editForm.days;
+                                          if (!sameArr(editForm.campType, origCampType)) diff.campType = editForm.campType;
+                                          if (!sameNum(editForm.ageMin, camp.ageMin)) diff.ageMin = editForm.ageMin;
+                                          if (!sameNum(editForm.ageMax, camp.ageMax)) diff.ageMax = editForm.ageMax;
+                                          if (!sameStr(editForm.gradeMin, camp.gradeMin)) diff.gradeMin = editForm.gradeMin;
+                                          if (!sameStr(editForm.gradeMax, camp.gradeMax)) diff.gradeMax = editForm.gradeMax;
+                                          if (!sameStr(editForm.location, camp.location)) diff.location = editForm.location;
+                                          if (!sameStr(editForm.address, camp.address)) diff.address = editForm.address;
+                                          if (!sameStr(editForm.url, camp.url)) diff.url = editForm.url;
+                                          if (!sameNum(editForm.cost, camp.cost)) diff.cost = editForm.cost;
+                                          if (!sameStr(editForm.discountCode, camp.discountCode)) diff.discountCode = editForm.discountCode;
+                                          if (!sameStr(editForm.notes, camp.notes)) diff.notes = editForm.notes;
+
+                                          // Save only when something actually changed
+                                          if (Object.keys(diff).length > 0) {
+                                            try { await updateCamp(camp.id, diff); }
+                                            catch (e) {
+                                              console.error('updateCamp error:', e);
+                                              alert("Couldn't save your changes. Please try again.");
+                                              return;
+                                            }
+                                          }
+                                          // Update local camp state with the new (full) values
                                           const fmt = (ds) => { if(!ds) return ""; const d=new Date(ds+"T12:00:00"); return d.toLocaleDateString("en-US",{month:"short",day:"numeric"}); };
                                           const dates = editForm.dateStart && editForm.dateEnd ? fmt(editForm.dateStart)+" - "+fmt(editForm.dateEnd) : fmt(editForm.dateStart||camp.dateStart);
                                           const hours = editForm.timeStart && editForm.timeEnd ? editForm.timeStart+" - "+editForm.timeEnd : camp.hours;
