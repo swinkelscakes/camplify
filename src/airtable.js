@@ -168,7 +168,7 @@ export const getEnrollments = async (kidIds) => {
           days: f.Days || [],
           beforeCare: f.BeforeCare || false,
           afterCare: f.AfterCare || false,
-          weeks: f.Weeks ? f.Weeks.split(',').filter(Boolean) : [],
+          weeks: f.Weeks ? f.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [],
           note: f.Note || '',
         };
       });
@@ -399,7 +399,7 @@ export const getCircles = async (userId) => {
           memberEnrollments.forEach(e => {
             const campId = e.fields.Camp ? e.fields.Camp[0] : null;
             if (campId) {
-              memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').filter(Boolean) : [];
+              memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [];
               memberCampStatus[campId] = e.fields.Status || 'enrolled';
               if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
               memberCampDays[campId] = e.fields.Days || [];
@@ -461,6 +461,16 @@ export const createCircle = async (userId, name, color, isPrivate) => {
     private: !!record.fields.Private,
     members: [],
   };
+};
+
+// Update a circle's editable fields. Only the creator should be allowed to
+// call this; permission is enforced client-side since Airtable doesn't have
+// per-record auth.
+export const updateCircle = async (circleId, fields) => {
+  const airtableFields = {};
+  if (fields.name !== undefined) airtableFields.Name = fields.name;
+  if (fields.private !== undefined) airtableFields.Private = !!fields.private;
+  await base('Circles').update(circleId, airtableFields);
 };
 
 // Join a circle by invite code
@@ -744,7 +754,7 @@ export const getCirclePublic = async (inviteCode) => {
       memberEnrollments.forEach(e => {
         const campId = e.fields.Camp ? e.fields.Camp[0] : null;
         if (campId) {
-          memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').filter(Boolean) : [];
+          memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [];
           memberCampStatus[campId] = e.fields.Status || 'enrolled';
           if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
         }

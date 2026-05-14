@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite, leaveCircle } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, updateCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite, leaveCircle } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -799,6 +799,9 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       .finally(() => setDiscoverLoading(false));
   }, [activeTab, discoverLoaded, userId, airtableCircles.length]);
   const [expandedMember, setExpandedMember] = useState(null);
+  // Inline edit-circle form state. When non-null, contains the circle being edited.
+  const [editingCircle, setEditingCircle] = useState(null); // { id, name, private }
+  const [editingCircleSaving, setEditingCircleSaving] = useState(false);
   const [selectedKids, setSelectedKids] = useState(new Set());
   const [inviteCircleId, setInviteCircleId] = useState(null);
   // Enrollment details modal (days + care selection when adding kid to camp)
@@ -3020,7 +3023,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               }
                               // Single-camp/break/empty layout (original behaviour)
                               return (
-                                <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default" }}
+                                <div style={{ flex: 1, height: 64, borderRadius: 10, background: bg, border, display: "flex", flexDirection: "column", alignItems: "stretch", overflow: "hidden", cursor: camp || isBreak ? "pointer" : person.isMyKid ? "pointer" : "default", position: "relative" }}
                                   onClick={e => {
                                     if (camp) setGridPopover({ camp, personName: person.isMyKid ? person.name : person.child, person, x: e.clientX, y: e.clientY });
                                     else if (isBreak && person.isMyKid) {
@@ -3034,6 +3037,23 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     }
                                     else if (!camp && !isBreak && person.isMyKid) setGridAddCell({ kidId: person.id, weekNum: w.num, x: e.clientX, y: e.clientY });
                                   }}>
+                                  {/* Explicit × to remove a break — much easier than
+                                      typing into the rename prompt. Only shown on
+                                      my own kids' breaks. */}
+                                  {isBreak && person.isMyKid && (
+                                    <button
+                                      onClick={e => { e.stopPropagation(); if (window.confirm(`Remove "${breakLabel}" break?`)) toggleKidWeekBreak(person.id, w.num); }}
+                                      title="Remove break"
+                                      style={{
+                                        position: "absolute", top: 4, right: 4, zIndex: 2,
+                                        width: 20, height: 20, borderRadius: "50%",
+                                        background: "rgba(255,255,255,0.85)", border: "none",
+                                        color: "#15803D", fontSize: 13, fontWeight: 700,
+                                        lineHeight: 1, padding: 0, cursor: "pointer",
+                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                      }}
+                                    >×</button>
+                                  )}
                                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px" }}>
                                     {isBreak && <span style={{ fontSize: 14 }}>🌿</span>}
                                     <span style={{ fontSize: 12, fontWeight: 700, color: textColor, textTransform: isBreak || camp ? "uppercase" : "none", letterSpacing: isBreak || camp ? "0.5px" : 0, textAlign: "center" }}>
@@ -5770,10 +5790,22 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const interests = profile.interests instanceof Set ? profile.interests : new Set(profile.interests || []);
             const kidName = kids.find(k => k.id === profileKidId)?.name || "";
             const kidFirstName = kidName.split(" ")[0];
+            // A circle is shown on this kid's profile only when there is an
+            // explicit CircleMembers row whose ChildName names THIS kid. We used
+            // to treat rows with empty ChildName as "all my kids," which made
+            // every newly-added sibling auto-appear in older circles. With the
+            // join flow now always writing a kid name, that fallback is unsafe
+            // — it leaks privacy and confuses families with multiple kids.
             const kidCircles = liveCircles.filter(c => c.members.some(m => {
               if (m.userId !== userId) return false;
-              if (!m.child) return true; // no child name = match all
-              return m.child === kidName || m.child === kidFirstName || kidName.startsWith(m.child);
+              if (!m.child) return false;
+              if (m.child === kidName) return true;
+              if (m.child === kidFirstName) return true;
+              // Allow a slightly looser first-name match in case a parent typed
+              // "Lenny K." in some places and "Lenny K" in others — but ONLY
+              // when the first names match. Cross-kid leakage stops here.
+              const memberFirst = m.child.split(" ")[0];
+              return memberFirst && memberFirst === kidFirstName;
             }));
             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
             // "Upcoming" = enrollments whose last attended day is today or later.
@@ -5974,7 +6006,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       const displayName = lastI ? `${firstName} ${lastI}.` : firstName;
                       const initials = (firstName[0] + (lastI || firstName[1] || "")).toUpperCase();
                       const newKid = await saveKid(userId, displayName, initials);
-                      await updateCircleMemberKid(userId, displayName).catch(console.error);
+                      // NOTE: deliberately NOT calling updateCircleMemberKid here.
+                      // That function fills in empty ChildName fields on any of
+                      // my CircleMembers rows with the just-added kid's name —
+                      // safe for the FIRST kid (when those rows were created
+                      // before any kid existed), but dangerous for subsequent
+                      // kids because it could silently overwrite ownership of a
+                      // sibling's circle with the new kid's name. New kids start
+                      // with no circles; the user joins them in explicitly.
                       setAirtableKids(prev => [...prev, newKid]);
                       setProfileKidId(newKid.id);
                       getCircles(userId).then(setAirtableCircles).catch(console.error);
@@ -6211,6 +6250,98 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         ))}
                       </div>
                     )}
+                    {/* Sibling-circles suggestion: if a sibling is in circles this
+                        kid isn't, surface them one-click join. Filters by:
+                        - circle is one of MY circles (already loaded in liveCircles)
+                        - some OTHER kid of mine has a CircleMembers row in it
+                        - THIS kid does NOT have a row in it
+                        Renders nothing when there are no siblings or no new
+                        circles to suggest, so it stays out of the way. */}
+                    {(() => {
+                      const myKids = kids;
+                      if (myKids.length < 2) return null;
+                      const thisKid = myKids.find(k => k.id === profileKidId);
+                      if (!thisKid) return null;
+                      const thisKidName = thisKid.name;
+                      const thisKidFirst = thisKidName.split(" ")[0];
+                      const siblingNames = new Set(
+                        myKids.filter(k => k.id !== profileKidId).map(k => k.name)
+                      );
+                      const siblingFirsts = new Set(
+                        myKids.filter(k => k.id !== profileKidId).map(k => k.name.split(" ")[0])
+                      );
+                      // Helper: does this circle's member row mine match a given kid name?
+                      const memberIsMine = (m) => m.userId === userId;
+                      const memberIsThisKid = (m) => {
+                        if (!m.child) return false;
+                        if (m.child === thisKidName) return true;
+                        const memberFirst = m.child.split(" ")[0];
+                        return memberFirst === thisKidFirst;
+                      };
+                      const memberIsSibling = (m) => {
+                        if (!m.child) return false;
+                        if (siblingNames.has(m.child)) return true;
+                        const memberFirst = m.child.split(" ")[0];
+                        return siblingFirsts.has(memberFirst);
+                      };
+                      const suggestions = liveCircles.filter(c => {
+                        const myMembers = c.members.filter(memberIsMine);
+                        const hasThisKid = myMembers.some(memberIsThisKid);
+                        if (hasThisKid) return false;
+                        const hasSibling = myMembers.some(memberIsSibling);
+                        return hasSibling;
+                      });
+                      if (suggestions.length === 0) return null;
+                      const joinForThisKid = async (circle) => {
+                        try {
+                          const result = await joinCircleByCode(userId, parentName, thisKidName, circle.inviteCode);
+                          if (result && !result.error) {
+                            // Refresh circles to surface the new row
+                            const updated = await getCircles(userId);
+                            setAirtableCircles(updated);
+                          }
+                        } catch (e) {
+                          console.error('Join sibling circle failed:', e);
+                        }
+                      };
+                      return (
+                        <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 14, marginBottom: 14 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>
+                            Your other {myKids.length > 2 ? "kids are" : "kid is"} in {suggestions.length === 1 ? "this circle" : "these circles"} — add {thisKidFirst}?
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {suggestions.map(c => (
+                              <div key={c.id} style={{
+                                display: "flex", alignItems: "center", gap: 10,
+                                padding: "8px 12px", borderRadius: 9,
+                                background: "#F9FAFB", border: "1px dashed #D1D5DB",
+                              }}>
+                                <div style={{
+                                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                                  background: c.color + "22", color: c.color,
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontWeight: 800, fontSize: 12,
+                                }}>{c.name[0]}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 12.5, color: "#1F2937" }}>{c.name}</div>
+                                  <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{c.members.length} families</div>
+                                </div>
+                                <button
+                                  onClick={() => joinForThisKid(c)}
+                                  style={{
+                                    background: "#3D6B1F", border: "none", borderRadius: 7,
+                                    padding: "6px 14px", fontFamily: "Inter, sans-serif",
+                                    fontSize: 12, fontWeight: 700, color: "white", cursor: "pointer",
+                                  }}
+                                  onMouseEnter={e => e.currentTarget.style.filter = "brightness(1.08)"}
+                                  onMouseLeave={e => e.currentTarget.style.filter = "none"}
+                                >Add {thisKidFirst}</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {/* Join a circle by invite code */}
                     <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 14, marginTop: kidCircles.length > 0 ? 0 : 4 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>Have an invite code? Join {kidCircles.length > 0 ? "another circle" : "a circle"}</div>
@@ -6444,6 +6575,116 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                       {expandedMember?.circleId === circle.id && (
                         <div className="circle-members">
+                          {/* Edit affordance — only visible to the user who created the circle.
+                              Toggles into an inline form for renaming and flipping the
+                              Private setting. */}
+                          {circle.createdBy === userId && (() => {
+                            const isEditing = editingCircle?.id === circle.id;
+                            if (!isEditing) {
+                              return (
+                                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                                  <button
+                                    onClick={() => setEditingCircle({ id: circle.id, name: circle.name, private: !!circle.private })}
+                                    style={{
+                                      background: "none", border: "1px solid #E5E7EB",
+                                      borderRadius: 7, padding: "5px 12px",
+                                      fontFamily: "Inter, sans-serif", fontSize: 12,
+                                      fontWeight: 600, color: "#374151", cursor: "pointer",
+                                      display: "flex", alignItems: "center", gap: 5,
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"}
+                                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    Edit circle
+                                  </button>
+                                </div>
+                              );
+                            }
+                            // Edit form
+                            const saveEdits = async () => {
+                              if (editingCircleSaving) return;
+                              const trimmed = (editingCircle.name || "").trim();
+                              if (!trimmed) return;
+                              setEditingCircleSaving(true);
+                              // Optimistic
+                              setAirtableCircles(prev => prev.map(c => c.id === circle.id ? { ...c, name: trimmed, private: editingCircle.private } : c));
+                              try {
+                                await updateCircle(circle.id, { name: trimmed, private: editingCircle.private });
+                                setEditingCircle(null);
+                              } catch (e) {
+                                console.error('updateCircle error:', e);
+                                alert("Couldn't save the circle. Please try again.");
+                                // Roll back
+                                setAirtableCircles(prev => prev.map(c => c.id === circle.id ? { ...c, name: circle.name, private: circle.private } : c));
+                              } finally {
+                                setEditingCircleSaving(false);
+                              }
+                            };
+                            return (
+                              <div style={{
+                                background: "#F9FAFB", border: "1px solid #E5E7EB",
+                                borderRadius: 10, padding: 14, marginBottom: 12,
+                              }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Edit circle</div>
+                                <label style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: "#6B7280", marginBottom: 5 }}>Name</label>
+                                <input
+                                  autoFocus
+                                  value={editingCircle.name}
+                                  onChange={e => setEditingCircle(prev => ({ ...prev, name: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === "Enter") saveEdits(); if (e.key === "Escape") setEditingCircle(null); }}
+                                  style={{ width: "100%", padding: "8px 12px", border: "1.5px solid #E5E7EB", borderRadius: 8, fontFamily: "Inter, sans-serif", fontSize: 13, color: "#1F2937", outline: "none", boxSizing: "border-box", marginBottom: 12 }}
+                                  onFocus={e => e.target.style.borderColor = "#3D6B1F"}
+                                  onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+                                />
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", marginBottom: 12 }}>
+                                  <button
+                                    onClick={() => setEditingCircle(prev => ({ ...prev, private: !prev.private }))}
+                                    aria-label="Toggle private"
+                                    style={{
+                                      width: 38, height: 22, borderRadius: 11,
+                                      background: editingCircle.private ? "#3D6B1F" : "#D1D5DB",
+                                      border: "none", cursor: "pointer", padding: 0,
+                                      position: "relative", flexShrink: 0,
+                                      transition: "background 0.15s",
+                                    }}
+                                  >
+                                    <div style={{
+                                      position: "absolute", top: 2, left: editingCircle.private ? 18 : 2,
+                                      width: 18, height: 18, borderRadius: "50%",
+                                      background: "white", transition: "left 0.15s",
+                                      boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                                    }} />
+                                  </button>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 12.5, fontWeight: 600, color: "#1F2937" }}>Private circle</div>
+                                    <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>
+                                      {editingCircle.private
+                                        ? "Hidden from Suggested for you. Only people with the invite code can join."
+                                        : "May appear under Suggested for you for friends of members."}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                                  <button
+                                    onClick={() => setEditingCircle(null)}
+                                    disabled={editingCircleSaving}
+                                    style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 7, padding: "6px 14px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: "#6B7280", cursor: "pointer" }}
+                                  >Cancel</button>
+                                  <button
+                                    onClick={saveEdits}
+                                    disabled={editingCircleSaving || !editingCircle.name.trim()}
+                                    style={{
+                                      background: editingCircleSaving || !editingCircle.name.trim() ? "#A7C291" : "#3D6B1F",
+                                      border: "none", borderRadius: 7, padding: "6px 16px",
+                                      fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700,
+                                      color: "white", cursor: editingCircleSaving || !editingCircle.name.trim() ? "default" : "pointer",
+                                    }}
+                                  >{editingCircleSaving ? "Saving…" : "Save"}</button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           {circle.members.map((m) => {
                             const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                             const memberCamps = m.camps.map(cid => allCampPool.find(c => c.id === cid)).filter(Boolean);
