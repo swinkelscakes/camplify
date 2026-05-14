@@ -3081,6 +3081,141 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       );
                     })}
                   </div>
+                  {/* Add-cell popover for mobile (centered modal style).
+                      Mirrors the desktop popover that opens when a parent
+                      taps "+" on an empty week to enroll their kid in a
+                      camp or mark the week as a break. */}
+                  {gridAddCell && (() => {
+                    const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
+                    const kid = kids.find(k => k.id === gridAddCell.kidId);
+                    const weekCampsAvail = allCampPool.filter(c =>
+                      campInWeek(c, gridAddCell.weekNum) &&
+                      !campStatus[c.id]?.[gridAddCell.kidId]
+                    );
+                    const allAvailCamps = allCampPool.filter(c => !campStatus[c.id]?.[gridAddCell.kidId]);
+                    const searchQuery = campSearch.trim().toLowerCase();
+                    const filteredCamps = searchQuery
+                      ? allAvailCamps.filter(c => {
+                          const name = (c.name || "").toLowerCase();
+                          const loc = (c.location || "").toLowerCase();
+                          return name.includes(searchQuery) || loc.includes(searchQuery);
+                        })
+                      : weekCampsAvail;
+                    return (
+                      <div
+                        style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.4)" }}
+                        onClick={() => { setGridAddCell(null); setCampSearch(""); }}
+                      >
+                        <div
+                          onClick={e => e.stopPropagation()}
+                          style={{
+                            position: "fixed", left: "50%", top: "50%",
+                            transform: "translate(-50%, -50%)",
+                            width: "min(92vw, 360px)", maxHeight: "85vh",
+                            overflow: "auto", background: "white",
+                            borderRadius: 14, boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+                            fontFamily: "Inter, sans-serif",
+                            display: "flex", flexDirection: "column",
+                          }}
+                        >
+                          <div style={{ background: "#3D6B1F", padding: "12px 16px", borderRadius: "14px 14px 0 0" }}>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                              {computedWeeks.find(w => w.num === gridAddCell.weekNum)?.dates}
+                            </div>
+                            <div style={{ fontSize: 14, color: "white", fontWeight: 700, marginTop: 2 }}>
+                              Add a camp for {kid?.name}
+                            </div>
+                          </div>
+                          <div style={{ padding: "10px 12px", borderBottom: "1px solid #F3F4F6" }}>
+                            <input
+                              placeholder="Search all camps..."
+                              value={campSearch}
+                              onChange={e => setCampSearch(e.target.value)}
+                              style={{ width: "100%", padding: "8px 12px", border: "1.5px solid #E5E7EB", borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 14, color: "#1F2937", outline: "none", boxSizing: "border-box" }}
+                              onFocus={e => e.target.style.borderColor = "#3D6B1F"}
+                              onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+                            />
+                            {!campSearch && weekCampsAvail.length > 0 && (
+                              <div style={{ fontSize: 10.5, color: "#9CA3AF", marginTop: 5, paddingLeft: 2 }}>Showing camps this week. Type to search all.</div>
+                            )}
+                          </div>
+                          <div style={{ padding: "4px 0", flex: 1, overflowY: "auto" }}>
+                            {filteredCamps.length === 0 ? (
+                              <div style={{ padding: "16px 14px", fontSize: 12.5, color: "#9CA3AF", textAlign: "center" }}>
+                                {campSearch ? "No camps match your search" : "No camps available this week"}
+                              </div>
+                            ) : filteredCamps.map(camp => (
+                              <button key={camp.id}
+                                onClick={() => {
+                                  openEnrollModal(camp.id, gridAddCell.kidId, "enrolled", camp.days);
+                                  setGridAddCell(null);
+                                  setCampSearch("");
+                                }}
+                                style={{
+                                  width: "100%", textAlign: "left", background: "none", border: "none",
+                                  padding: "10px 14px", cursor: "pointer", fontFamily: "Inter, sans-serif",
+                                  display: "flex", alignItems: "center", gap: 10,
+                                }}
+                              >
+                                <div style={{ width: 8, height: 8, borderRadius: "50%", background: camp.color, flexShrink: 0 }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F2937", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{camp.name}</div>
+                                  <div style={{ fontSize: 11.5, color: "#9CA3AF", marginTop: 1 }}>{camp.location} · {camp.dates}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                          <div style={{ borderTop: "1px solid #F3F4F6" }}>
+                            <button
+                              onClick={() => { setGridAddCell(null); setActiveTab("import"); setCampSearch(""); }}
+                              style={{
+                                width: "100%", textAlign: "left", background: "none", border: "none",
+                                padding: "11px 14px", cursor: "pointer", fontFamily: "Inter, sans-serif",
+                                fontSize: 13.5, fontWeight: 600, color: "#3D6B1F",
+                              }}
+                            >+ Add a new camp</button>
+                          </div>
+                          <div style={{ borderTop: "1px solid #F3F4F6", padding: "10px 14px 12px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                              <span>🌿</span> Mark as break
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input
+                                placeholder="e.g. Away, Grandparents..."
+                                value={breakLabelInput}
+                                onChange={e => setBreakLabelInput(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") {
+                                    setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, breakLabelInput.trim() || "Break");
+                                    setBreakLabelInput("");
+                                    setGridAddCell(null);
+                                  }
+                                  if (e.key === "Escape") setGridAddCell(null);
+                                }}
+                                style={{
+                                  flex: 1, padding: "8px 12px", border: "1.5px solid #E5E7EB",
+                                  borderRadius: 7, fontFamily: "Inter, sans-serif", fontSize: 14,
+                                  color: "#1F2937", outline: "none", boxSizing: "border-box",
+                                }}
+                              />
+                              <button
+                                onClick={() => {
+                                  setKidBreak(gridAddCell.kidId, gridAddCell.weekNum, breakLabelInput.trim() || "Break");
+                                  setBreakLabelInput("");
+                                  setGridAddCell(null);
+                                }}
+                                style={{
+                                  background: "#15803D", border: "none", borderRadius: 7,
+                                  padding: "8px 14px", fontFamily: "Inter, sans-serif",
+                                  fontSize: 13, fontWeight: 700, color: "white", cursor: "pointer",
+                                }}
+                              >Add</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* Camp detail popover for mobile (centered modal style). */}
                   {gridPopover && (() => {
                     const camp = gridPopover.camp;
