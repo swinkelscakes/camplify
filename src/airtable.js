@@ -596,6 +596,41 @@ export const leaveCircle = async (userId, circleId) => {
   return { deletedCircle: false };
 };
 
+// Leave a circle as a specific kid only. Removes the CircleMembers row
+// where UserId matches AND ChildName matches the given name (first-name
+// match also accepted, since some rows carry full names and some don't).
+// If the parent has no other kids in the circle after this, the circle
+// will naturally disappear from their view via the normal kidCircles
+// filter. Returns { removed: number } indicating how many rows were
+// deleted (usually 1, but defensively handles duplicates).
+export const leaveCircleAsKid = async (userId, circleId, childName) => {
+  if (!childName) return { removed: 0 };
+  const childFirst = childName.split(" ")[0];
+  // Pull my rows in this circle
+  const myMemberships = await base('CircleMembers').select({
+    filterByFormula: `AND({UserId} = '${userId}', FIND('${circleId}', ARRAYJOIN({Circle})) > 0)`
+  }).all().catch(() => []);
+
+  const matchingRows = myMemberships.filter(r => {
+    const rowChild = r.fields.ChildName || '';
+    if (!rowChild) return false;
+    if (rowChild === childName) return true;
+    const rowFirst = rowChild.split(" ")[0];
+    return rowFirst && rowFirst === childFirst;
+  });
+
+  let removed = 0;
+  for (const row of matchingRows) {
+    try {
+      await base('CircleMembers').destroy(row.id);
+      removed += 1;
+    } catch (e) {
+      console.warn('Failed to delete CircleMembers row:', e);
+    }
+  }
+  return { removed };
+};
+
 // Update parent name in all CircleMembers records for this user
 export const updateParentName = async (userId, parentName) => {
   try {

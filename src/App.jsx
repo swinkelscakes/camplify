@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, updateCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite, leaveCircle } from "./airtable";
+import { getCamps, getKids, saveKid, updateKid, getEnrollments, saveEnrollment, updateEnrollment, deleteEnrollment, updateEnrollmentNote, getBreaks, saveBreak, updateBreak, deleteBreak, updateCamp, saveCamp, getCircles, createCircle, updateCircle, joinCircleByCode, updateCircleMemberKid, updateParentName, getImportantDates, saveImportantDate, deleteImportantDate, getReviews, saveReview, getCirclePublic, deleteAccount, getCircleDates, saveCircleDate, updateCircleDate, deleteCircleDate, getDiscoverableCircles, getFavorites, addFavorite, removeFavorite, leaveCircle, leaveCircleAsKid } from "./airtable";
 import { useUser, useClerk, SignIn } from "@clerk/clerk-react";
 
 const COLORS = {
@@ -714,6 +714,30 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     catch { return true; }
   });
   const [showHelpPopover, setShowHelpPopover] = useState(false);
+  // Hidden-from-my-overview kids. Local to this device, keyed by userId so
+  // different accounts on the same browser don't collide. The kid records
+  // themselves are unchanged in Airtable — this is a *view* preference. Friends
+  // and other circles still see the kid normally.
+  const HIDDEN_KIDS_KEY = `camplify_hidden_kids_${userId || "anon"}`;
+  const [hiddenKidIds, setHiddenKidIds] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(HIDDEN_KIDS_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+  const toggleKidHidden = (kidId) => {
+    setHiddenKidIds(prev => {
+      const next = new Set(prev);
+      if (next.has(kidId)) next.delete(kidId);
+      else next.add(kidId);
+      try { window.localStorage.setItem(HIDDEN_KIDS_KEY, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+  const showAllKids = () => {
+    setHiddenKidIds(new Set());
+    try { window.localStorage.removeItem(HIDDEN_KIDS_KEY); } catch {}
+  };
   // Circle-level date editor state (shared across circles — only one open at a time)
   const [circleDateCircleId, setCircleDateCircleId] = useState(null); // which circle is editing
   const [circleDateEditId, setCircleDateEditId] = useState(null); // which existing date is being edited (null = adding new)
@@ -2809,7 +2833,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const myCircleIds = new Set(activeCircles.map(c => c.id));
 
             // My kids rows come first
-            const myKidRows = kids.map(k => ({ ...k, isMyKid: true }));
+            const myKidRows = kids.filter(k => !hiddenKidIds.has(k.id)).map(k => ({ ...k, isMyKid: true }));
 
             // Build a map: personKey -> weekNum -> [camp]
             const getPersonCamps = (personCamps, campWeeks, personBreaks, personCampStatus) => {
@@ -2897,6 +2921,30 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               const allDays = ["M","T","W","Th","F"];
               return (
                 <div style={{ padding: "0 0 80px" }}>
+                  {/* "X hidden kid(s) — Show all" banner. Renders only when the
+                      user has hidden at least one of their kids from their own
+                      Overview. Click to clear the hidden set. */}
+                  {hiddenKidIds.size > 0 && (
+                    <div style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      gap: 8, padding: "8px 12px", marginBottom: 10,
+                      background: "#FEF3C7", border: "1px solid #FDE68A",
+                      borderRadius: 9, fontFamily: "Inter, sans-serif",
+                    }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#92400E" }}>
+                        {hiddenKidIds.size} of your {hiddenKidIds.size === 1 ? "kid is" : "kids are"} hidden from your view
+                      </span>
+                      <button
+                        onClick={showAllKids}
+                        style={{
+                          background: "none", border: "1px solid #FCD34D",
+                          borderRadius: 6, padding: "3px 10px",
+                          fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700,
+                          color: "#92400E", cursor: "pointer",
+                        }}
+                      >Show all</button>
+                    </div>
+                  )}
                   {/* Week nav — sticky at top so the user can see which week
                       they're scrolling within. Stacks just below the app
                       header (which is also sticky at top: 0). */}
@@ -2989,6 +3037,23 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   </button>
                                 );
                               })()}
+                              {/* Hide-from-my-view: only my own kids. Local to
+                                  this device. Friends and other circles still
+                                  see the kid as normal. */}
+                              {person.isMyKid && (
+                                <button
+                                  onClick={e => { e.stopPropagation(); toggleKidHidden(person.id); }}
+                                  title={`Hide ${person.name} from my view`}
+                                  style={{ background: "none", border: "none", padding: 2, cursor: "pointer", flexShrink: 0, lineHeight: 0, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", color: "#9CA3AF", transition: "color 0.12s" }}
+                                  onMouseEnter={e => e.currentTarget.style.color = "#6B7280"}
+                                  onMouseLeave={e => e.currentTarget.style.color = "#9CA3AF"}
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                  </svg>
+                                </button>
+                              )}
                             </div>
                             {/* Camp cell. When there's only one camp/break/empty, render
                                 a single chip. When there are multiple camps (e.g. one enrolled
@@ -3476,6 +3541,30 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
             return (
               <div style={{ position: "relative" }}>
+                {/* "X hidden kid(s) — Show all" banner for desktop. Same as mobile. */}
+                {hiddenKidIds.size > 0 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    gap: 8, padding: "8px 14px", marginBottom: 12,
+                    background: "#FEF3C7", border: "1px solid #FDE68A",
+                    borderRadius: 9, fontFamily: "Inter, sans-serif",
+                  }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>
+                      {hiddenKidIds.size} of your {hiddenKidIds.size === 1 ? "kid is" : "kids are"} hidden from your view
+                    </span>
+                    <button
+                      onClick={showAllKids}
+                      style={{
+                        background: "none", border: "1px solid #FCD34D",
+                        borderRadius: 6, padding: "4px 12px",
+                        fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700,
+                        color: "#92400E", cursor: "pointer",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(252,211,77,0.3)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "none"}
+                    >Show all</button>
+                  </div>
+                )}
                 {/* Circle filter */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 22, flexWrap: "wrap" }}>
                   <button
@@ -3527,6 +3616,23 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 </button>
                               );
                             })()}
+                            {/* Hide-from-my-view: only my own kids. Local to
+                                this device. Friends and other circles still
+                                see the kid as normal. */}
+                            {person.isMyKid && (
+                              <button
+                                onClick={e => { e.stopPropagation(); toggleKidHidden(person.id); }}
+                                title={`Hide ${person.name} from my view`}
+                                style={{ background: "none", border: "none", padding: 2, cursor: "pointer", flexShrink: 0, lineHeight: 0, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", color: "#9CA3AF", transition: "color 0.12s" }}
+                                onMouseEnter={e => e.currentTarget.style.color = "#6B7280"}
+                                onMouseLeave={e => e.currentTarget.style.color = "#9CA3AF"}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                  <circle cx="12" cy="12" r="3"/>
+                                </svg>
+                              </button>
+                            )}
                           </div>
                           {isLastMyKid && friendRows.length > 0 && <div style={{ height: 2, background: "#E5E7EB" }} />}
                         </div>
@@ -6381,6 +6487,34 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 </div>
                               ))}
                             </div>
+                            {/* Leave-as-kid button — removes only THIS kid from
+                                this circle, leaving siblings (and the rest of
+                                the family) intact. */}
+                            <button
+                              onClick={async () => {
+                                const thisKidName = kids.find(k => k.id === profileKidId)?.name || "";
+                                if (!thisKidName) return;
+                                if (!window.confirm(`Remove ${thisKidName} from "${c.name}"? Other family members in this circle won't be affected.`)) return;
+                                try {
+                                  await leaveCircleAsKid(userId, c.id, thisKidName);
+                                  const updated = await getCircles(userId);
+                                  setAirtableCircles(updated);
+                                } catch (e) {
+                                  console.error('Leave circle as kid failed:', e);
+                                  alert("Couldn't leave the circle. Please try again.");
+                                }
+                              }}
+                              title={`Remove from this circle`}
+                              style={{
+                                marginLeft: 6, flexShrink: 0,
+                                background: "none", border: "1px solid #FCA5A5",
+                                borderRadius: 7, padding: "4px 9px",
+                                fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600,
+                                color: "#DC2626", cursor: "pointer",
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
+                              onMouseLeave={e => e.currentTarget.style.background = "none"}
+                            >Leave</button>
                           </div>
                         ))}
                       </div>
@@ -6842,6 +6976,35 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                     </div>
                                   </div>
                                   <span className="member-camp-count">{memberCamps.length} camps</span>
+                                  {/* Per-kid leave button — shown only on MY OWN member rows
+                                      in this circle. Each kid is a separate row, so this
+                                      removes only that specific kid's membership. */}
+                                  {m.userId === userId && m.child && (
+                                    <button
+                                      onClick={async e => {
+                                        e.stopPropagation();
+                                        if (!window.confirm(`Remove ${m.child} from "${circle.name}"?`)) return;
+                                        try {
+                                          await leaveCircleAsKid(userId, circle.id, m.child);
+                                          const updated = await getCircles(userId);
+                                          setAirtableCircles(updated);
+                                        } catch (err) {
+                                          console.error('Leave circle as kid failed:', err);
+                                          alert("Couldn't leave the circle. Please try again.");
+                                        }
+                                      }}
+                                      title={`Remove ${m.child} from this circle`}
+                                      style={{
+                                        marginLeft: 6, flexShrink: 0,
+                                        background: "none", border: "1px solid #FCA5A5",
+                                        borderRadius: 7, padding: "4px 9px",
+                                        fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600,
+                                        color: "#DC2626", cursor: "pointer",
+                                      }}
+                                      onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
+                                      onMouseLeave={e => e.currentTarget.style.background = "none"}
+                                    >Leave</button>
+                                  )}
                                 </div>
                                 {isMemberOpen && memberCamps.length > 0 && (
                                   <div className="member-camps-detail">
@@ -7049,39 +7212,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               <button className="invite-cancel" onClick={() => { setInviteCircleId(null); }}>Done</button>
                             </div>
                           )}
-                          {/* Leave circle */}
-                          <div style={{ borderTop: "1px solid #F3F4F6", marginTop: 16, paddingTop: 14, display: "flex", justifyContent: "flex-end" }}>
-                            <button
-                              onClick={async () => {
-                                const otherMembers = (circle.members || []).filter(m => m.userId !== userId);
-                                const isLast = otherMembers.length === 0;
-                                const msg = isLast
-                                  ? `Leave "${circle.name}"? You're the only member, so this will permanently delete the circle and any of its dates. This can't be undone.`
-                                  : `Leave "${circle.name}"? You won't see members' camps and they won't see yours.`;
-                                if (!window.confirm(msg)) return;
-                                try {
-                                  await leaveCircle(userId, circle.id);
-                                  // Refresh circles list
-                                  const fresh = await getCircles(userId);
-                                  setAirtableCircles(fresh);
-                                  setExpandedMember(null);
-                                } catch (e) {
-                                  console.error('Leave circle failed:', e);
-                                  alert('Could not leave the circle. Please try again.');
-                                }
-                              }}
-                              style={{
-                                background: "none", border: "1.5px solid #FCA5A5", borderRadius: 8,
-                                padding: "7px 14px", fontFamily: "Inter, sans-serif",
-                                fontSize: 12.5, fontWeight: 600, color: "#DC2626", cursor: "pointer",
-                                transition: "background 0.12s",
-                              }}
-                              onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
-                              onMouseLeave={e => e.currentTarget.style.background = "none"}
-                            >
-                              Leave circle
-                            </button>
-                          </div>
                         </div>
                       )}
                     </div>
