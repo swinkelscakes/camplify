@@ -2945,6 +2945,43 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       >Show all</button>
                     </div>
                   )}
+                  {/* Circle filter — horizontally scrollable strip of pills so
+                      the user can narrow the Overview to one or a few circles.
+                      Mirrors the desktop version that lives above the grid. */}
+                  {liveCircles.length > 0 && (
+                    <div style={{
+                      display: "flex", gap: 6, marginBottom: 10,
+                      overflowX: "auto", paddingBottom: 4,
+                      scrollbarWidth: "none", msOverflowStyle: "none",
+                    }}>
+                      <style>{`.mobile-circle-filter::-webkit-scrollbar { display: none; }`}</style>
+                      <button
+                        className="mobile-circle-filter"
+                        onClick={() => setSelectedCircles(new Set())}
+                        style={{
+                          background: selectedCircles.size === 0 ? "#3D6B1F" : "white",
+                          color: selectedCircles.size === 0 ? "white" : "#6B7280",
+                          border: `1.5px solid ${selectedCircles.size === 0 ? "#3D6B1F" : "#E5E7EB"}`,
+                          borderRadius: 7, padding: "5px 12px",
+                          fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                          whiteSpace: "nowrap", flexShrink: 0,
+                        }}
+                      >All circles</button>
+                      {liveCircles.map(c => (
+                        <button key={c.id}
+                          onClick={() => toggleCircle(c.id)}
+                          style={{
+                            background: selectedCircles.has(c.id) ? c.color : "white",
+                            color: selectedCircles.has(c.id) ? "white" : "#6B7280",
+                            border: `1.5px solid ${selectedCircles.has(c.id) ? c.color : "#E5E7EB"}`,
+                            borderRadius: 7, padding: "5px 12px",
+                            fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                            whiteSpace: "nowrap", flexShrink: 0,
+                          }}
+                        >{c.name}</button>
+                      ))}
+                    </div>
+                  )}
                   {/* Week nav — sticky at top so the user can see which week
                       they're scrolling within. Stacks just below the app
                       header (which is also sticky at top: 0). */}
