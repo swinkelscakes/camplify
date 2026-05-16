@@ -834,24 +834,43 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [enrollWeeks, setEnrollWeeks] = useState([]);
   const [enrollBeforeCare, setEnrollBeforeCare] = useState(false);
   const [enrollAfterCare, setEnrollAfterCare] = useState(false);
-  const openEnrollModal = (campId, kidId, status, campDays) => {
+  // openEnrollModal opens the enrollment editor for a (camp, kid) pair.
+  // - status: "enrolled" | "thinking"
+  // - campDays: default day chips if camp has none configured
+  // - targetWeek (optional): a Monday ISO string to ensure is selected on open.
+  //     Used when opening from the Overview grid's "+" cell so the user lands
+  //     pre-set to add THIS week. Existing weeks (from a prior enrollment) are
+  //     preserved — selecting a new week never replaces them.
+  const openEnrollModal = (campId, kidId, status, campDays, targetWeek) => {
     const camp = [...camps, ...airtableCamps, ...dynamicCamps].find(c => c.id === campId);
     setEnrollModal({ campId, kidId, status });
     const daysToUse = (camp?.days?.length > 0 ? camp.days : null) || campDays || ["M","T","W","Th","F"];
     setEnrollDays(daysToUse);
-    // For single-week camps auto-select the week; for multi-week start empty so parent chooses
+    // Use existing enrollment weeks (if any) as the starting selection so the
+    // user doesn't accidentally wipe out the kid's existing weeks on this camp.
+    const existing = campStatus[campId]?.[kidId];
+    const existingWeeks = (existing && typeof existing === "object" && Array.isArray(existing.weeks))
+      ? existing.weeks
+      : [];
+    // Compute the camp's full week list (used for single-week camps that
+    // should auto-select).
+    let campWeeks = [];
     if (camp?.dateStart) {
       const getMon = (ds) => { const d = new Date(ds + "T12:00:00"); const dow = d.getDay(); d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1)); return d.toISOString().slice(0, 10); };
-      const weeks = [];
       const cur = new Date(getMon(camp.dateStart) + "T12:00:00");
       const endD = new Date((camp.dateEnd || camp.dateStart) + "T12:00:00");
-      while (cur <= endD) { weeks.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 7); }
-      setEnrollWeeks(weeks.length === 1 ? weeks : []);
-    } else {
-      setEnrollWeeks([]);
+      while (cur <= endD) { campWeeks.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 7); }
     }
-    setEnrollBeforeCare(false);
-    setEnrollAfterCare(false);
+    // Merge: start with existing weeks, add the targetWeek (if any), and for
+    // single-week camps with no prior enrollment, auto-select that one week.
+    const next = new Set(existingWeeks);
+    if (targetWeek) next.add(targetWeek);
+    if (existingWeeks.length === 0 && !targetWeek && campWeeks.length === 1) {
+      next.add(campWeeks[0]);
+    }
+    setEnrollWeeks([...next]);
+    setEnrollBeforeCare(existing && typeof existing === "object" ? !!existing.beforeCare : false);
+    setEnrollAfterCare(existing && typeof existing === "object" ? !!existing.afterCare : false);
   };
   const confirmEnroll = () => {
     if (!enrollModal) return;
@@ -3190,14 +3209,27 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   {gridAddCell && (() => {
                     const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                     const kid = kids.find(k => k.id === gridAddCell.kidId);
+                    // Helper: is this kid already enrolled in this camp FOR THIS
+                    // specific week? Multi-week camps were getting hidden from
+                    // search just because the kid had any other week of the same
+                    // camp on their schedule — now only the actual occupied week
+                    // is excluded.
+                    const isThisWeekTaken = (campId) => {
+                      const status = campStatus[campId]?.[gridAddCell.kidId];
+                      if (!status) return false;
+                      const weeks = status.weeks || [];
+                      return weeks.includes(gridAddCell.weekNum);
+                    };
                     const weekCampsAvail = allCampPool.filter(c =>
                       campInWeek(c, gridAddCell.weekNum) &&
-                      !campStatus[c.id]?.[gridAddCell.kidId]
+                      !isThisWeekTaken(c.id)
                     );
-                    const allAvailCamps = allCampPool.filter(c => !campStatus[c.id]?.[gridAddCell.kidId]);
+                    // Search shows ALL camps so multi-week camps with prior
+                    // enrollments are still findable. The enrollment editor
+                    // handles adding weeks to an existing enrollment.
                     const searchQuery = campSearch.trim().toLowerCase();
                     const filteredCamps = searchQuery
-                      ? allAvailCamps.filter(c => {
+                      ? allCampPool.filter(c => {
                           const name = (c.name || "").toLowerCase();
                           const loc = (c.location || "").toLowerCase();
                           return name.includes(searchQuery) || loc.includes(searchQuery);
@@ -3249,7 +3281,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             ) : filteredCamps.map(camp => (
                               <button key={camp.id}
                                 onClick={() => {
-                                  openEnrollModal(camp.id, gridAddCell.kidId, "enrolled", camp.days);
+                                  openEnrollModal(camp.id, gridAddCell.kidId, "enrolled", camp.days, gridAddCell.weekNum);
                                   setGridAddCell(null);
                                   setCampSearch("");
                                 }}
@@ -4260,15 +4292,25 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 {gridAddCell && (() => {
                   const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
                   const kid = kids.find(k => k.id === gridAddCell.kidId);
+                  // Only treat the camp as "taken" for THIS week if the kid's
+                  // enrollment includes this Monday in its weeks list. Otherwise
+                  // multi-week camps were getting hidden from search just because
+                  // the kid had any other week of the same camp.
+                  const isThisWeekTaken = (campId) => {
+                    const status = campStatus[campId]?.[gridAddCell.kidId];
+                    if (!status) return false;
+                    const weeks = status.weeks || [];
+                    return weeks.includes(gridAddCell.weekNum);
+                  };
                   const weekCampsAvail = allCampPool.filter(c =>
                     campInWeek(c, gridAddCell.weekNum) &&
-                    !campStatus[c.id]?.[gridAddCell.kidId]
+                    !isThisWeekTaken(c.id)
                   );
-                  // All camps not yet enrolled, for search
-                  const allAvailCamps = allCampPool.filter(c => !campStatus[c.id]?.[gridAddCell.kidId]);
+                  // Search shows ALL camps so multi-week camps with prior
+                  // enrollments are still findable.
                   const searchQuery = campSearch.trim().toLowerCase();
                   const filteredCamps = searchQuery
-                    ? allAvailCamps.filter(c => {
+                    ? allCampPool.filter(c => {
                         const name = (c.name || "").toLowerCase();
                         const loc = (c.location || "").toLowerCase();
                         return name.includes(searchQuery) || loc.includes(searchQuery);
@@ -4321,7 +4363,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           ) : filteredCamps.map(camp => (
                             <button key={camp.id}
                               onClick={() => {
-                                openEnrollModal(camp.id, gridAddCell.kidId, "enrolled", camp.days);
+                                openEnrollModal(camp.id, gridAddCell.kidId, "enrolled", camp.days, gridAddCell.weekNum);
                                 setGridAddCell(null);
                                 setCampSearch("");
                               }}
