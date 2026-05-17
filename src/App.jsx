@@ -1125,6 +1125,10 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   // camp data loaded, we scroll to the week before the kids' next enrolled
   // camp so the user lands near "now" instead of at the far left.
   const gridScrollRef = useRef(null);
+  // Ref to the sticky header band's scrollable inner row, kept in sync with
+  // the body's horizontal scroll so the week column headers track the
+  // grid as it scrolls horizontally.
+  const gridHeaderScrollRef = useRef(null);
   const didInitialScrollRef = useRef(false);
   // Mobile pager offset (which week index is shown). Defaults to 0; the
   // useEffect below recalculates the right starting week when the user
@@ -3650,12 +3654,82 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                   ))}
                 </div>
 
-                {/* Grid - name column frozen, weeks scroll */}
-                <div style={{ position: "relative", display: "flex" }}>
+                {/* Grid wrapper: vertical stack so the sticky header band can
+                    sit above the body without being trapped inside the body's
+                    horizontally-scrolling container (overflow-x:auto traps
+                    sticky on the Y axis). The header band has its own
+                    horizontal scroll synced to the body via onScroll. */}
+                <div style={{ position: "relative" }}>
+                  {/* Sticky header band */}
+                  <div style={{ position: "sticky", top: 56, zIndex: 20, display: "flex", background: "#F9FAFB" }}>
+                    {/* Frozen header spacer — matches the body's frozen column */}
+                    <div style={{ width: NAME_W, flexShrink: 0, height: 52, background: "#F9FAFB", borderBottom: "2px solid #E5E7EB", boxShadow: "3px 0 8px rgba(0,0,0,0.05)" }} />
+                    {/* Header scrollable (horizontal). overflow-x:hidden keeps
+                        the scrollbar off here; scrollLeft is mirrored from the
+                        body container so the columns track together. */}
+                    <div
+                      ref={el => { gridHeaderScrollRef.current = el; }}
+                      style={{ overflowX: "hidden", flex: 1 }}
+                    >
+                      <div style={{ minWidth: visibleWeeks.length * (COL_W + 8), display: "flex", height: 52, alignItems: "flex-end", borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }}>
+                        {visibleWeeks.map(w => {
+                          const weekStart = new Date(w.num + "T00:00:00");
+                          const holidays = getHolidaysInWeek(w.num);
+                          const weekCircleDates = getCircleDatesInWeek(w.num);
+                          const dayLabels = ["M","T","W","Th","F"].map((day, i) => {
+                            const dayDate = new Date(weekStart); dayDate.setDate(dayDate.getDate() + i);
+                            const dayIso = dayDate.toISOString().slice(0, 10);
+                            const importantMatch = importantDates.find(d => {
+                              if (!d.dateStart) return false;
+                              const ds = new Date(d.dateStart + "T12:00:00");
+                              const de = d.dateEnd ? new Date(d.dateEnd + "T12:00:00") : ds;
+                              return dayDate >= ds && dayDate <= de;
+                            });
+                            const holidayMatch = holidays.find(h => h.date === dayIso);
+                            const circleDateMatch = weekCircleDates.find(cd => cd.date === dayIso);
+                            return { day, importantMatch, holidayMatch, circleDateMatch };
+                          });
+                          return (
+                            <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, borderLeft: "1px solid #F0F0F0" }}>
+                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px", textAlign: "center", paddingBottom: 4, paddingTop: 4 }}>
+                                {w.dates}
+                              </div>
+                              <div style={{ display: "flex", borderTop: "1px solid #F0F0F0", paddingBottom: 6 }}>
+                                {dayLabels.map(({ day, importantMatch, holidayMatch, circleDateMatch }) => {
+                                  const tooltip = [holidayMatch?.name, circleDateMatch?.name, importantMatch?.label].filter(Boolean).join(" · ");
+                                  const color = holidayMatch || circleDateMatch ? "#EF4444" : importantMatch ? "#F59E0B" : "#D1D5DB";
+                                  return (
+                                    <div key={day} style={{ flex: 1, textAlign: "center", paddingTop: 3, fontSize: 8.5, fontWeight: 700, color, cursor: tooltip ? "help" : "default" }}
+                                      onMouseEnter={e => {
+                                        if (!tooltip) return;
+                                        const tip = document.createElement("div");
+                                        tip.id = "day-tip";
+                                        tip.textContent = tooltip;
+                                        tip.style.cssText = "position:fixed;background:#1F2937;color:white;font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;z-index:9999;pointer-events:none;white-space:nowrap;font-family:Inter,sans-serif;";
+                                        const r = e.currentTarget.getBoundingClientRect();
+                                        tip.style.left = (r.left + r.width/2) + "px";
+                                        tip.style.top = (r.top - 28) + "px";
+                                        tip.style.transform = "translateX(-50%)";
+                                        document.body.appendChild(tip);
+                                      }}
+                                      onMouseLeave={() => { const t = document.getElementById("day-tip"); if (t) t.remove(); }}
+                                    >
+                                      {day}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Grid - name column frozen, weeks scroll */}
+                  <div style={{ position: "relative", display: "flex" }}>
                   {/* Frozen name column */}
                   <div style={{ width: NAME_W, flexShrink: 0, zIndex: 10, background: "#F9FAFB", boxShadow: "3px 0 8px rgba(0,0,0,0.05)" }}>
-                    {/* Header spacer */}
-                    <div style={{ height: 52, borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }} />
                     {allRows.map((person, pi) => {
                       const isLastMyKid = person.isMyKid && pi === myKidRows.length - 1;
                       return (
@@ -3801,64 +3875,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       });
                       didInitialScrollRef.current = true;
                     }}
+                    onScroll={e => {
+                      // Mirror horizontal scroll position to the sticky header
+                      // band so the week columns stay aligned with the body.
+                      if (gridHeaderScrollRef.current) {
+                        gridHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                      }
+                    }}
                     style={{ overflowX: "auto", flex: 1, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin", scrollbarColor: "#E5E7EB transparent" }}
                   >
                     <div style={{ minWidth: visibleWeeks.length * (COL_W + 8) }}>
-
-                      {/* Header row */}
-                      <div style={{ display: "flex", height: 52, alignItems: "flex-end", borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }}>
-                        {visibleWeeks.map(w => {
-                          const weekStart = new Date(w.num + "T00:00:00");
-                          const holidays = getHolidaysInWeek(w.num);
-                          // All circle dates for this user — they're in all their own circles
-                          const weekCircleDates = getCircleDatesInWeek(w.num);
-                          const dayLabels = ["M","T","W","Th","F"].map((day, i) => {
-                            const dayDate = new Date(weekStart); dayDate.setDate(dayDate.getDate() + i);
-                            const dayIso = dayDate.toISOString().slice(0, 10);
-                            const importantMatch = importantDates.find(d => {
-                              if (!d.dateStart) return false;
-                              const ds = new Date(d.dateStart + "T12:00:00");
-                              const de = d.dateEnd ? new Date(d.dateEnd + "T12:00:00") : ds;
-                              return dayDate >= ds && dayDate <= de;
-                            });
-                            const holidayMatch = holidays.find(h => h.date === dayIso);
-                            const circleDateMatch = weekCircleDates.find(cd => cd.date === dayIso);
-                            return { day, importantMatch, holidayMatch, circleDateMatch };
-                          });
-                          return (
-                            <div key={w.num} style={{ width: COL_W, flexShrink: 0, marginRight: 8, borderLeft: "1px solid #F0F0F0" }}>
-                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.8px", textAlign: "center", paddingBottom: 4, paddingTop: 4 }}>
-                                {w.dates}
-                              </div>
-                              <div style={{ display: "flex", borderTop: "1px solid #F0F0F0", paddingBottom: 6 }}>
-                                {dayLabels.map(({ day, importantMatch, holidayMatch, circleDateMatch }) => {
-                                  const tooltip = [holidayMatch?.name, circleDateMatch?.name, importantMatch?.label].filter(Boolean).join(" · ");
-                                  const color = holidayMatch || circleDateMatch ? "#EF4444" : importantMatch ? "#F59E0B" : "#D1D5DB";
-                                  return (
-                                    <div key={day} style={{ flex: 1, textAlign: "center", paddingTop: 3, fontSize: 8.5, fontWeight: 700, color, cursor: tooltip ? "help" : "default" }}
-                                      onMouseEnter={e => {
-                                        if (!tooltip) return;
-                                        const tip = document.createElement("div");
-                                        tip.id = "day-tip";
-                                        tip.textContent = tooltip;
-                                        tip.style.cssText = "position:fixed;background:#1F2937;color:white;font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;z-index:9999;pointer-events:none;white-space:nowrap;font-family:Inter,sans-serif;";
-                                        const r = e.currentTarget.getBoundingClientRect();
-                                        tip.style.left = (r.left + r.width/2) + "px";
-                                        tip.style.top = (r.top - 28) + "px";
-                                        tip.style.transform = "translateX(-50%)";
-                                        document.body.appendChild(tip);
-                                      }}
-                                      onMouseLeave={() => { const t = document.getElementById("day-tip"); if (t) t.remove(); }}
-                                    >
-                                      {day}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
 
                       {/* Week-only rows (names in frozen column) */}
                       {allRows.map((person, pi) => {
@@ -4073,6 +4099,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       })}
                     </div>
                   </div>
+                </div>
                 </div>
 
                 {/* Camp detail popover */}
