@@ -1125,6 +1125,8 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   // camp data loaded, we scroll to the week before the kids' next enrolled
   // camp so the user lands near "now" instead of at the far left.
   const gridScrollRef = useRef(null);
+  // Touch swipe tracking for mobile week pager — { x, y, t } at touchstart.
+  const swipeRef = useRef(null);
   // Ref to the sticky header band's scrollable inner row, kept in sync with
   // the body's horizontal scroll so the week column headers track the
   // grid as it scrolls horizontally.
@@ -3031,8 +3033,37 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       style={{ background: "none", border: "none", fontSize: 20, cursor: mobileWeekOffset >= visibleWeeks.length - 1 ? "default" : "pointer", color: mobileWeekOffset >= visibleWeeks.length - 1 ? "#D1D5DB" : "#374151", padding: "0 8px" }}>→</button>
                   </div>
 
-                  {/* Kid cards for this week */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* Kid cards for this week. Swipe left/right anywhere on
+                      this container to advance/retreat the week pager —
+                      threshold 50px, with vertical drift suppressed so
+                      vertical page scrolling isn't hijacked. */}
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 10 }}
+                    onTouchStart={e => {
+                      const t = e.touches[0];
+                      swipeRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+                    }}
+                    onTouchEnd={e => {
+                      const start = swipeRef.current;
+                      if (!start) return;
+                      const t = e.changedTouches[0];
+                      const dx = t.clientX - start.x;
+                      const dy = t.clientY - start.y;
+                      const dt = Date.now() - start.t;
+                      swipeRef.current = null;
+                      // Require mostly-horizontal motion and reasonable speed.
+                      if (Math.abs(dx) < 50) return;
+                      if (Math.abs(dy) > Math.abs(dx)) return;
+                      if (dt > 800) return;
+                      if (dx < 0) {
+                        // Swipe left → next week
+                        setMobileWeekOffset(o => Math.min(visibleWeeks.length - 1, o + 1));
+                      } else {
+                        // Swipe right → previous week
+                        setMobileWeekOffset(o => Math.max(0, o - 1));
+                      }
+                    }}
+                  >
                     {allRows.map((person, pi) => {
                       const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus);
                       const dayCamps = byWeek[w.num] || [];
