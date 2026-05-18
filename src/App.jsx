@@ -80,6 +80,14 @@ const campInWeek = (camp, weekIso) => {
   const wEnd = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   return camp.dateStart <= wEnd && (camp.dateEnd || camp.dateStart) >= wStart;
 };
+// Resolve the effective status for a single week within a multi-week
+// enrollment. The row's primary Status is used as the default for every
+// week; any week present in thinkingWeeks is downgraded to "thinking".
+// Lets one enrollment row mix "enrolled" and "thinking" across weeks.
+const resolveStatusForWeek = (primaryStatus, thinkingWeeks, weekIso) => {
+  if (Array.isArray(thinkingWeeks) && thinkingWeeks.includes(weekIso)) return "thinking";
+  return primaryStatus || "enrolled";
+};
 const STATUS_CONFIG = {
   enrolled: { label: "Enrolled", bg: "#5a8f35", light: "#eef5e8" },
   thinking:  { label: "Interested", bg: "#D97706", light: "#FEF3C7" },
@@ -660,6 +668,7 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
             beforeCare: e.beforeCare,
             afterCare: e.afterCare,
             weeks: e.weeks || [],
+            thinkingWeeks: e.thinkingWeeks || [],
           };
           newIds[e.campId + '-' + e.kidId] = e.id;
           if (e.note) newEnrollmentNotes[e.kidId + '-' + e.campId] = e.note;
@@ -832,6 +841,10 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
   const [enrollModal, setEnrollModal] = useState(null); // { campId, kidId, status }
   const [enrollDays, setEnrollDays] = useState([]);
   const [enrollWeeks, setEnrollWeeks] = useState([]);
+  // Per-week thinking subset within an enrolled enrollment. Lets the user
+  // toggle each week between "Enrolled" and "Thinking" while keeping the
+  // overall enrollment status.
+  const [enrollThinkingWeeks, setEnrollThinkingWeeks] = useState([]);
   const [enrollBeforeCare, setEnrollBeforeCare] = useState(false);
   const [enrollAfterCare, setEnrollAfterCare] = useState(false);
   // openEnrollModal opens the enrollment editor for a (camp, kid) pair.
@@ -869,6 +882,12 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       next.add(campWeeks[0]);
     }
     setEnrollWeeks([...next]);
+    // Existing thinking-week marks carry over so opening the editor doesn't
+    // silently re-promote a "thinking" week back to "enrolled".
+    const existingThinkingWeeks = (existing && typeof existing === "object" && Array.isArray(existing.thinkingWeeks))
+      ? existing.thinkingWeeks
+      : [];
+    setEnrollThinkingWeeks(existingThinkingWeeks);
     setEnrollBeforeCare(existing && typeof existing === "object" ? !!existing.beforeCare : false);
     setEnrollAfterCare(existing && typeof existing === "object" ? !!existing.afterCare : false);
   };
@@ -878,6 +897,9 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       status: enrollModal.status,
       days: enrollDays,
       weeks: enrollWeeks,
+      // Only marks within the selected weeks are persisted — clearing a week
+      // also clears its thinking status.
+      thinkingWeeks: enrollThinkingWeeks.filter(w => enrollWeeks.includes(w)),
       beforeCare: enrollBeforeCare,
       afterCare: enrollAfterCare,
     });
@@ -1021,6 +1043,10 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
 
   const submitManualForm = () => {
     if (!manualForm.name.trim()) return;
+    if (!manualForm.dateStart || !manualForm.dateEnd) {
+      alert("Please add the camp's start and end dates before saving.");
+      return;
+    }
     const dup = findDuplicate(manualForm.name);
     if (dup && !duplicateMatch) {
       setDuplicateMatch(dup);
@@ -1587,10 +1613,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
     const beforeCare = details.beforeCare || false;
     const afterCare = details.afterCare || false;
     const weeks = details.weeks || [];
+    // thinkingWeeks is the per-week downgrade subset. Treat undefined as "leave
+    // alone" so non-modal callers (like setStatus) don't wipe an existing value.
+    const thinkingWeeks = Array.isArray(details.thinkingWeeks) ? details.thinkingWeeks : null;
+    const opts = thinkingWeeks !== null ? { thinkingWeeks, includeThinkingWeeksEvenIfEmpty: true } : undefined;
     if (existingId) {
-      await updateEnrollment(existingId, status, days, beforeCare, afterCare, weeks).catch(console.error);
+      await updateEnrollment(existingId, status, days, beforeCare, afterCare, weeks, opts).catch(console.error);
     } else {
-      const newId = await saveEnrollment(kidId, campId, status, days, beforeCare, afterCare, weeks).catch(console.error);
+      const newId = await saveEnrollment(kidId, campId, status, days, beforeCare, afterCare, weeks, opts).catch(console.error);
       if (newId) setEnrollmentIds(prev => ({ ...prev, [key]: newId }));
     }
     // If this enrollment is "enrolled", remove this kid's interest in OTHER
@@ -2861,17 +2891,20 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
             const myKidRows = kids.filter(k => !hiddenKidIds.has(k.id)).map(k => ({ ...k, isMyKid: true }));
 
             // Build a map: personKey -> weekNum -> [camp]
-            const getPersonCamps = (personCamps, campWeeks, personBreaks, personCampStatus) => {
+            const getPersonCamps = (personCamps, campWeeks, personBreaks, personCampStatus, personCampThinkingWeeks) => {
               const byWeek = {};
               visibleWeeks.forEach(w => { byWeek[w.num] = []; });
               allCampPool.forEach(camp => {
                 if (personCamps.includes(camp.id)) {
                   const enrolledWeeks = campWeeks?.[camp.id] || [];
                   const status = personCampStatus?.[camp.id] || 'enrolled';
+                  const thinkingWeeks = personCampThinkingWeeks?.[camp.id] || [];
                   visibleWeeks.forEach(w => {
                     if (campInWeek(camp, w.num)) {
                       if (enrolledWeeks.length === 0 || enrolledWeeks.includes(w.num)) {
-                        byWeek[w.num].push({ ...camp, kidStatus: status });
+                        // Mixed-status: ThinkingWeeks overrides primary status for one week.
+                        const effective = resolveStatusForWeek(status, thinkingWeeks, w.num);
+                        byWeek[w.num].push({ ...camp, kidStatus: effective });
                       }
                     }
                   });
@@ -2896,11 +2929,14 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 if (status) {
                   const s = typeof status === "string" ? status : status.status;
                   const enrolledWeeks = status?.weeks || null;
+                  const thinkingWeeks = status?.thinkingWeeks || [];
                   if (s) {
                     visibleWeeks.forEach(w => {
                       if (campInWeek(camp, w.num)) {
                         if (!enrolledWeeks || enrolledWeeks.length === 0 || enrolledWeeks.includes(w.num)) {
-                          byWeek[w.num].push({ ...camp, kidStatus: s });
+                          // Mixed-status enrollment: ThinkingWeeks overrides the row's primary status for that single week.
+                          const effective = resolveStatusForWeek(s, thinkingWeeks, w.num);
+                          byWeek[w.num].push({ ...camp, kidStatus: effective });
                         }
                       }
                     });
@@ -3065,7 +3101,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     }}
                   >
                     {allRows.map((person, pi) => {
-                      const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus);
+                      const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus, person.campThinkingWeeks);
                       const dayCamps = byWeek[w.num] || [];
                       const isBreak = dayCamps.length === 1 && dayCamps[0].__break;
                       const breakLabel = isBreak ? (dayCamps[0].label || "Break") : null;
@@ -3919,7 +3955,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
                       {/* Week-only rows (names in frozen column) */}
                       {allRows.map((person, pi) => {
-                        const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus);
+                        const byWeek = person.isMyKid ? getKidCamps(person) : getPersonCamps(person.camps, person.campWeeks, person.breaks, person.campStatus, person.campThinkingWeeks);
                         const isLastMyKid = person.isMyKid && pi === myKidRows.length - 1;
                         const allDays = ["M","T","W","Th","F"];
                         return (
@@ -7065,9 +7101,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: 12.5, fontWeight: 600, color: "#1F2937" }}>Private circle</div>
                                     <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>
-                                      {editingCircle.private
-                                        ? "Hidden from Suggested for you. Only people with the invite code can join."
-                                        : "May appear under Suggested for you for friends of members."}
+                                      Private circles will not appear in suggestions. People can still join with the invite code.
                                     </div>
                                   </div>
                                 </div>
@@ -7603,16 +7637,6 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 <div className="import-success">Camp added successfully!</div>
               ) : (
                 <>
-                  {/* Reminder for camp adders */}
-                  <div style={{
-                    background: "#FEF3C7", border: "1px solid #FDE68A",
-                    borderRadius: 10, padding: "10px 14px",
-                    marginBottom: 14, fontFamily: "Inter, sans-serif",
-                    fontSize: 13, color: "#78350F", display: "flex", alignItems: "center", gap: 8,
-                  }}>
-                    <span style={{ fontSize: 15 }}>📅</span>
-                    <span>Please add all days and weeks the camp runs, not just when your kid is attending.</span>
-                  </div>
                   {/* ── EMAIL FORWARDING CARD ── */}
                   {(() => {
                     const forwardEmail = "add@camps.camplify.app";
@@ -7702,13 +7726,25 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                     <div style={{ flex: 1, height: 1, background: "#e5e7eb" }} />
                   </div>
 
+                  {/* Reminder for camp adders — sits just above the form so
+                      the heads-up is right next to the fields they'll fill in. */}
+                  <div style={{
+                    background: "#FEF3C7", border: "1px solid #FDE68A",
+                    borderRadius: 10, padding: "10px 14px",
+                    marginBottom: 14, fontFamily: "Inter, sans-serif",
+                    fontSize: 13, color: "#78350F", display: "flex", alignItems: "center", gap: 8,
+                  }}>
+                    <span style={{ fontSize: 15 }}>📅</span>
+                    <span>Please add all days and weeks the camp runs, not just when your kid is attending.</span>
+                  </div>
+
                   {/* ── MANUAL FORM ── */}
                   {(() => { const addMode = "manual"; return (
                     <div className="import-card">
                       <div className="form-grid">
 
                         <div className="form-field full" style={{ position: "relative" }}>
-                          <label className="import-label">Camp Name</label>
+                          <label className="import-label">Camp Name <span style={{ color: "#DC2626" }}>*</span></label>
                           <input
                             className="form-input"
                             placeholder="e.g. Wilderness Adventure Camp"
@@ -7789,13 +7825,13 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         </div>
 
                         <div className="form-field">
-                          <label className="import-label">Start Date</label>
-                          <input type="date" className="form-input" value={manualForm.dateStart} onChange={e => updateForm("dateStart", e.target.value)} />
+                          <label className="import-label">Start Date <span style={{ color: "#DC2626" }}>*</span></label>
+                          <input type="date" required className="form-input" value={manualForm.dateStart} onChange={e => updateForm("dateStart", e.target.value)} />
                         </div>
 
                         <div className="form-field">
-                          <label className="import-label">End Date</label>
-                          <input type="date" className="form-input" value={manualForm.dateEnd} onChange={e => updateForm("dateEnd", e.target.value)} />
+                          <label className="import-label">End Date <span style={{ color: "#DC2626" }}>*</span></label>
+                          <input type="date" required className="form-input" value={manualForm.dateEnd} onChange={e => updateForm("dateEnd", e.target.value)} />
                         </div>
 
                         <div className="form-field">
@@ -8035,7 +8071,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             </div>
                           </div>
                         )}
-                        <button className="btn-primary" onClick={submitManualForm} disabled={!manualForm.name.trim()}>Add Camp</button>
+                        <button className="btn-primary" onClick={submitManualForm} disabled={!manualForm.name.trim() || !manualForm.dateStart || !manualForm.dateEnd}>Add Camp</button>
                       </div>
                     </div>
                   ); })()}
@@ -8304,29 +8340,66 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {campAllWeeks.map(w => {
                           const selected = enrollWeeks.includes(w.num);
+                          const isThinking = enrollThinkingWeeks.includes(w.num);
+                          // Per-week status toggle is only meaningful when the
+                          // overall enrollment status is "enrolled". Mixing
+                          // "thinking" or "waitlist" with itself doesn't help.
+                          const showWeekStatusToggle = enrollModal.status === "enrolled" && selected;
                           return (
                             <button key={w.num}
                               onClick={() => setEnrollWeeks(prev => prev.includes(w.num) ? prev.filter(x => x !== w.num) : [...prev, w.num])}
                               style={{
                                 display: "flex", alignItems: "center", gap: 10,
                                 padding: "8px 12px", borderRadius: 8, cursor: "pointer",
-                                border: `1.5px solid ${selected ? camp.color : "#E5E7EB"}`,
-                                background: selected ? camp.color + "12" : "white",
+                                border: `1.5px solid ${selected ? (isThinking ? "#F59E0B" : camp.color) : "#E5E7EB"}`,
+                                background: selected ? (isThinking ? "#FEF3C7" : camp.color + "12") : "white",
                                 fontFamily: "Inter, sans-serif", textAlign: "left",
                                 transition: "all 0.12s",
                               }}
                             >
                               <div style={{
                                 width: 18, height: 18, borderRadius: 5, flexShrink: 0,
-                                border: `2px solid ${selected ? camp.color : "#D1D5DB"}`,
-                                background: selected ? camp.color : "white",
+                                border: `2px solid ${selected ? (isThinking ? "#F59E0B" : camp.color) : "#D1D5DB"}`,
+                                background: selected ? (isThinking ? "#F59E0B" : camp.color) : "white",
                                 display: "flex", alignItems: "center", justifyContent: "center",
                               }}>
                                 {selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                               </div>
-                              <div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: selected ? camp.color : "#374151" }}>{w.dates}</div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: selected ? (isThinking ? "#92400E" : camp.color) : "#374151" }}>{w.dates}</div>
                               </div>
+                              {showWeekStatusToggle && (
+                                <div
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ display: "flex", gap: 0, flexShrink: 0, border: `1px solid ${isThinking ? "#F59E0B" : camp.color}`, borderRadius: 6, overflow: "hidden" }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setEnrollThinkingWeeks(prev => prev.filter(x => x !== w.num))}
+                                    style={{
+                                      fontFamily: "Inter, sans-serif",
+                                      fontSize: 9.5, fontWeight: 700, letterSpacing: "0.4px",
+                                      padding: "4px 8px", border: "none",
+                                      background: !isThinking ? camp.color : "white",
+                                      color: !isThinking ? "white" : camp.color,
+                                      cursor: "pointer",
+                                    }}
+                                  >ENROLLED</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEnrollThinkingWeeks(prev => prev.includes(w.num) ? prev : [...prev, w.num])}
+                                    style={{
+                                      fontFamily: "Inter, sans-serif",
+                                      fontSize: 9.5, fontWeight: 700, letterSpacing: "0.4px",
+                                      padding: "4px 8px", border: "none",
+                                      borderLeft: `1px solid ${isThinking ? "#F59E0B" : camp.color}`,
+                                      background: isThinking ? "#F59E0B" : "white",
+                                      color: isThinking ? "white" : "#92400E",
+                                      cursor: "pointer",
+                                    }}
+                                  >THINKING</button>
+                                </div>
+                              )}
                             </button>
                           );
                         })}

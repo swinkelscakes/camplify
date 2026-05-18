@@ -169,6 +169,13 @@ export const getEnrollments = async (kidIds) => {
           beforeCare: f.BeforeCare || false,
           afterCare: f.AfterCare || false,
           weeks: f.Weeks ? f.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [],
+          // ThinkingWeeks is a subset of Weeks for which the kid's status is
+          // downgraded to "thinking" even when the row's primary Status is
+          // "enrolled". Lets a single multi-week enrollment mix definitely-going
+          // weeks with still-deciding weeks. Reads as [] if the field is empty
+          // or missing — older enrollments and bases without the column still
+          // work unchanged.
+          thinkingWeeks: f.ThinkingWeeks ? f.ThinkingWeeks.split(',').map(w => w.trim()).filter(Boolean) : [],
           note: f.Note || '',
         };
       });
@@ -178,9 +185,11 @@ export const getEnrollments = async (kidIds) => {
   }
 };
 
-// Save a new enrollment
-export const saveEnrollment = async (kidId, campId, status, days, beforeCare, afterCare, weeks) => {
-  const record = await base('Enrollments').create({
+// Save a new enrollment. opts is an optional bag of extras (currently just
+// thinkingWeeks) so older positional callers keep working.
+export const saveEnrollment = async (kidId, campId, status, days, beforeCare, afterCare, weeks, opts) => {
+  const thinkingWeeks = (opts && Array.isArray(opts.thinkingWeeks)) ? opts.thinkingWeeks : [];
+  const fields = {
     Kid: [kidId],
     Camp: [campId],
     Status: status,
@@ -188,19 +197,33 @@ export const saveEnrollment = async (kidId, campId, status, days, beforeCare, af
     BeforeCare: beforeCare || false,
     AfterCare: afterCare || false,
     Weeks: weeks && weeks.length > 0 ? weeks.join(',') : '',
-  });
+  };
+  // Only include ThinkingWeeks when there's something to write — keeps old
+  // bases without that column happy. Empty value still updates the field to
+  // empty so a user can clear thinking-week marks.
+  if (thinkingWeeks.length > 0 || opts?.includeThinkingWeeksEvenIfEmpty) {
+    fields.ThinkingWeeks = thinkingWeeks.join(',');
+  }
+  const record = await base('Enrollments').create(fields);
   return record.id;
 };
 
-// Update an existing enrollment
-export const updateEnrollment = async (enrollmentId, status, days, beforeCare, afterCare, weeks) => {
-  await base('Enrollments').update(enrollmentId, {
+// Update an existing enrollment. Same opts shape as saveEnrollment.
+export const updateEnrollment = async (enrollmentId, status, days, beforeCare, afterCare, weeks, opts) => {
+  const thinkingWeeks = (opts && Array.isArray(opts.thinkingWeeks)) ? opts.thinkingWeeks : null;
+  const fields = {
     Status: status,
     Days: days || [],
     BeforeCare: beforeCare || false,
     AfterCare: afterCare || false,
     Weeks: weeks && weeks.length > 0 ? weeks.join(',') : '',
-  });
+  };
+  // Only write ThinkingWeeks if the caller passed one — preserves any existing
+  // value when an old code path saves without knowing about the new field.
+  if (thinkingWeeks !== null) {
+    fields.ThinkingWeeks = thinkingWeeks.join(',');
+  }
+  await base('Enrollments').update(enrollmentId, fields);
 };
 
 // Delete an enrollment
@@ -392,6 +415,10 @@ export const getCircles = async (userId) => {
           const memberCampWeeks = {};
           // Build status map: campId -> status
           const memberCampStatus = {};
+          // Per-camp subset of weeks that the friend is just thinking about
+          // even when the row's primary Status is "enrolled". Same shape as
+          // memberCampWeeks.
+          const memberCampThinkingWeeks = {};
           // Build note map: campId -> free-text note (visible to circle)
           const memberCampNotes = {};
           // Build days map: campId -> enrolled days ["M","T",...]
@@ -401,6 +428,7 @@ export const getCircles = async (userId) => {
             if (campId) {
               memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [];
               memberCampStatus[campId] = e.fields.Status || 'enrolled';
+              memberCampThinkingWeeks[campId] = e.fields.ThinkingWeeks ? e.fields.ThinkingWeeks.split(',').map(w => w.trim()).filter(Boolean) : [];
               if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
               memberCampDays[campId] = e.fields.Days || [];
             }
@@ -421,6 +449,7 @@ export const getCircles = async (userId) => {
             camps: memberCampIds,
             campWeeks: memberCampWeeks,
             campStatus: memberCampStatus,
+            campThinkingWeeks: memberCampThinkingWeeks,
             campNotes: memberCampNotes,
             campDays: memberCampDays,
             breaks: memberBreaks,
@@ -785,12 +814,14 @@ export const getCirclePublic = async (inviteCode) => {
         .filter(Boolean);
       const memberCampWeeks = {};
       const memberCampStatus = {};
+      const memberCampThinkingWeeks = {};
       const memberCampNotes = {};
       memberEnrollments.forEach(e => {
         const campId = e.fields.Camp ? e.fields.Camp[0] : null;
         if (campId) {
           memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [];
           memberCampStatus[campId] = e.fields.Status || 'enrolled';
+          memberCampThinkingWeeks[campId] = e.fields.ThinkingWeeks ? e.fields.ThinkingWeeks.split(',').map(w => w.trim()).filter(Boolean) : [];
           if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
         }
       });
@@ -806,6 +837,7 @@ export const getCirclePublic = async (inviteCode) => {
         camps: memberCampIds,
         campWeeks: memberCampWeeks,
         campStatus: memberCampStatus,
+        campThinkingWeeks: memberCampThinkingWeeks,
         campNotes: memberCampNotes,
         breaks: memberBreaks,
         visible: isVisible,
