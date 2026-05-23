@@ -369,7 +369,7 @@ function CirclePreviewGrid({ circle, camps, onSignUp }) {
   };
 
   const COL_W = 140;
-  const NAME_W = 130;
+  const NAME_W = 170;
   const ROW_H = 90;
 
   return (
@@ -2951,7 +2951,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
 
             const COL_W = 148;
-            const NAME_W = 130;
+            const NAME_W = 170;
             const allRows = [
               ...myKidRows.map(k => ({ ...k, isMyKid: true })),
               ...friendRowsSorted,
@@ -3452,6 +3452,31 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               {camp.hours && (
                                 <div style={{ fontSize: 12, color: "#374151" }}>🕐 {camp.hours}</div>
                               )}
+                              {/* This kid's extended-care selections for this camp.
+                                  Works for both my kids and friends. */}
+                              {(() => {
+                                if (!personObj) return null;
+                                let enrolledBC = false, enrolledAC = false;
+                                if (personObj.isMyKid) {
+                                  const enr = campStatus[camp.id]?.[personObj.id];
+                                  enrolledBC = !!(enr && typeof enr === "object" && enr.beforeCare);
+                                  enrolledAC = !!(enr && typeof enr === "object" && enr.afterCare);
+                                } else {
+                                  enrolledBC = !!personObj.campBeforeCare?.[camp.id];
+                                  enrolledAC = !!personObj.campAfterCare?.[camp.id];
+                                }
+                                if (!enrolledBC && !enrolledAC) return null;
+                                return (
+                                  <>
+                                    {enrolledBC && (
+                                      <div style={{ fontSize: 12, color: "#374151" }}>☀ Before Care{camp.beforeCare ? ` · ${camp.beforeCare}` : ""}</div>
+                                    )}
+                                    {enrolledAC && (
+                                      <div style={{ fontSize: 12, color: "#374151" }}>🌙 After Care{camp.afterCare ? ` · ${camp.afterCare}` : ""}</div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               {(camp.ageMin || camp.ageMax) && (
                                 <div style={{ fontSize: 12, color: "#374151" }}>👤 {camp.ageMin && camp.ageMax ? `Ages ${camp.ageMin}–${camp.ageMax}` : camp.ageMin ? `Ages ${camp.ageMin}+` : `Up to age ${camp.ageMax}`}</div>
                               )}
@@ -4227,6 +4252,45 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               <span style={{ fontSize: 12, color: "#374151", fontWeight: 500 }}>{gridPopover.camp.hours}</span>
                             </div>
                           )}
+                          {/* This kid's extended-care selections for this camp.
+                              For MY kid: read from campStatus. For friends:
+                              read from the circle member data (campBeforeCare /
+                              campAfterCare maps). */}
+                          {(() => {
+                            const person = gridPopover.person;
+                            if (!person) return null;
+                            const campId = gridPopover.camp.id;
+                            let enrolledBC = false, enrolledAC = false;
+                            if (person.isMyKid) {
+                              const enr = campStatus[campId]?.[person.id];
+                              enrolledBC = !!(enr && typeof enr === "object" && enr.beforeCare);
+                              enrolledAC = !!(enr && typeof enr === "object" && enr.afterCare);
+                            } else {
+                              enrolledBC = !!person.campBeforeCare?.[campId];
+                              enrolledAC = !!person.campAfterCare?.[campId];
+                            }
+                            if (!enrolledBC && !enrolledAC) return null;
+                            return (
+                              <>
+                                {enrolledBC && (
+                                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                    <span style={{ fontSize: 13, flexShrink: 0, width: 13, textAlign: "center" }}>☀</span>
+                                    <span style={{ fontSize: 12, color: "#374151", fontWeight: 500 }}>
+                                      Before Care{gridPopover.camp.beforeCare ? ` · ${gridPopover.camp.beforeCare}` : ""}
+                                    </span>
+                                  </div>
+                                )}
+                                {enrolledAC && (
+                                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                    <span style={{ fontSize: 13, flexShrink: 0, width: 13, textAlign: "center" }}>🌙</span>
+                                    <span style={{ fontSize: 12, color: "#374151", fontWeight: 500 }}>
+                                      After Care{gridPopover.camp.afterCare ? ` · ${gridPopover.camp.afterCare}` : ""}
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                           {gridPopover.camp.days && (
                             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -6252,6 +6316,16 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                 }
                 if (!lastDayIso) return true; // no date info → keep visible
                 return lastDayIso >= todayIso;
+              })
+              // Earliest-first so the list reads chronologically as the user
+              // scrolls. Camps without a start date are pushed to the end.
+              .sort((a, b) => {
+                const ad = a.dateStart || "";
+                const bd = b.dateStart || "";
+                if (!ad && !bd) return (a.name || "").localeCompare(b.name || "");
+                if (!ad) return 1;
+                if (!bd) return -1;
+                return ad.localeCompare(bd);
               });
 
             if (loading) return (

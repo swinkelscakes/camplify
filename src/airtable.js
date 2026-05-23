@@ -419,6 +419,11 @@ export const getCircles = async (userId) => {
           // even when the row's primary Status is "enrolled". Same shape as
           // memberCampWeeks.
           const memberCampThinkingWeeks = {};
+          // Per-camp extended-care flags. Friends see whether the kid is
+          // signed up for before/after care for each enrolled camp so they
+          // can coordinate pickup or carpools.
+          const memberCampBeforeCare = {};
+          const memberCampAfterCare = {};
           // Build note map: campId -> free-text note (visible to circle)
           const memberCampNotes = {};
           // Build days map: campId -> enrolled days ["M","T",...]
@@ -429,6 +434,8 @@ export const getCircles = async (userId) => {
               memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [];
               memberCampStatus[campId] = e.fields.Status || 'enrolled';
               memberCampThinkingWeeks[campId] = e.fields.ThinkingWeeks ? e.fields.ThinkingWeeks.split(',').map(w => w.trim()).filter(Boolean) : [];
+              memberCampBeforeCare[campId] = !!e.fields.BeforeCare;
+              memberCampAfterCare[campId] = !!e.fields.AfterCare;
               if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
               memberCampDays[campId] = e.fields.Days || [];
             }
@@ -450,6 +457,8 @@ export const getCircles = async (userId) => {
             campWeeks: memberCampWeeks,
             campStatus: memberCampStatus,
             campThinkingWeeks: memberCampThinkingWeeks,
+            campBeforeCare: memberCampBeforeCare,
+            campAfterCare: memberCampAfterCare,
             campNotes: memberCampNotes,
             campDays: memberCampDays,
             breaks: memberBreaks,
@@ -815,6 +824,8 @@ export const getCirclePublic = async (inviteCode) => {
       const memberCampWeeks = {};
       const memberCampStatus = {};
       const memberCampThinkingWeeks = {};
+      const memberCampBeforeCare = {};
+      const memberCampAfterCare = {};
       const memberCampNotes = {};
       memberEnrollments.forEach(e => {
         const campId = e.fields.Camp ? e.fields.Camp[0] : null;
@@ -822,6 +833,8 @@ export const getCirclePublic = async (inviteCode) => {
           memberCampWeeks[campId] = e.fields.Weeks ? e.fields.Weeks.split(',').map(w => w.trim()).filter(Boolean) : [];
           memberCampStatus[campId] = e.fields.Status || 'enrolled';
           memberCampThinkingWeeks[campId] = e.fields.ThinkingWeeks ? e.fields.ThinkingWeeks.split(',').map(w => w.trim()).filter(Boolean) : [];
+          memberCampBeforeCare[campId] = !!e.fields.BeforeCare;
+          memberCampAfterCare[campId] = !!e.fields.AfterCare;
           if (e.fields.Note) memberCampNotes[campId] = e.fields.Note;
         }
       });
@@ -838,6 +851,8 @@ export const getCirclePublic = async (inviteCode) => {
         campWeeks: memberCampWeeks,
         campStatus: memberCampStatus,
         campThinkingWeeks: memberCampThinkingWeeks,
+        campBeforeCare: memberCampBeforeCare,
+        campAfterCare: memberCampAfterCare,
         campNotes: memberCampNotes,
         breaks: memberBreaks,
         visible: isVisible,
