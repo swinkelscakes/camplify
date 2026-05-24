@@ -1510,6 +1510,10 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
   const [friendProfilePopover, setFriendProfilePopover] = useState(null); // { person, x, y }
   const [campTypeFilter, setCampTypeFilter] = useState(new Set());
   const [campSort, setCampSort] = useState("date");
+  // Free-text search on the Camps tab. Matches against camp name, location,
+  // address, and notes — kept simple so partial matches like "stem", "Studio
+  // City", or a teacher's name in the notes all surface results.
+  const [campsListSearch, setCampsListSearch] = useState("");
   // Camps tab filter: "" = any age/grade; "age:N" = kids age N years;
   // "grade:K"|"grade:1".."grade:12" = by grade. Matches camps whose
   // age/grade bounds cover the chosen value (with age↔grade fallback).
@@ -4795,9 +4799,18 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
               return true;
             };
 
+            const searchQ = campsListSearch.trim().toLowerCase();
+            const matchesSearch = (c) => {
+              if (!searchQ) return true;
+              const haystack = [c.name, c.location, c.address, c.notes]
+                .filter(Boolean).join(" ").toLowerCase();
+              return haystack.includes(searchQ);
+            };
+
             const filtered = allCampPool
               .filter(c => campTypeFilter.size === 0 || (Array.isArray(c.campType) ? c.campType.some(t => campTypeFilter.has(t)) : campTypeFilter.has(c.campType)))
               .filter(matchesAgeGrade)
+              .filter(matchesSearch)
               .slice()
               .sort((a, b) => {
                 if (campSort === "name") return a.name.localeCompare(b.name);
@@ -4825,6 +4838,43 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
 
             return (
               <div>
+                {/* Search box. Matches across camp name, location, address,
+                    and notes. Composes with the type chips and age/grade
+                    filter below so the user can drill in further. */}
+                <div style={{ position: "relative", marginBottom: 10 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                  <input
+                    value={campsListSearch}
+                    onChange={e => setCampsListSearch(e.target.value)}
+                    placeholder="Search camps by name, location, or notes…"
+                    style={{
+                      width: "100%", padding: "9px 36px 9px 34px",
+                      border: "1.5px solid #E5E7EB", borderRadius: 8,
+                      fontFamily: "Inter, sans-serif", fontSize: 13.5,
+                      color: "#1F2937", outline: "none", boxSizing: "border-box",
+                      background: "white",
+                    }}
+                    onFocus={e => e.target.style.borderColor = "#3D6B1F"}
+                    onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+                  />
+                  {campsListSearch && (
+                    <button
+                      onClick={() => setCampsListSearch("")}
+                      aria-label="Clear search"
+                      style={{
+                        position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                        background: "none", border: "none", padding: 4, cursor: "pointer",
+                        color: "#9CA3AF", lineHeight: 0,
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  )}
+                </div>
                 {/* Filters row 1: type chips. Horizontally scroll on overflow
                     instead of wrapping to multiple lines, which kept making the
                     page feel cluttered. */}
