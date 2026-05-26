@@ -3567,6 +3567,26 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 </div>
                               );
                             })()}
+                            {/* Remove from MY kid's schedule (mobile). */}
+                            {personObj?.isMyKid && campStatus[camp.id]?.[personObj.id] && (
+                              <button
+                                onClick={async () => {
+                                  const personName = personObj.name || "this kid";
+                                  if (!window.confirm(`Remove ${camp.name} from ${personName}'s schedule?`)) return;
+                                  await removeStatus(camp.id, personObj.id);
+                                  setGridPopover(null);
+                                }}
+                                style={{
+                                  marginTop: 10, width: "100%",
+                                  background: "none", color: "#DC2626",
+                                  border: "1.5px solid #FCA5A5", borderRadius: 8, padding: "8px 0",
+                                  fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 12.5,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Remove from {personObj.name || "schedule"}
+                              </button>
+                            )}
                             <button
                               onClick={() => { setFocusedCampId(camp.id); setExpandedCampId(camp.id); setGridPopover(null); setActiveTab("camps"); }}
                               style={{ marginTop: 14, width: "100%", background: "#3D6B1F", color: "white", border: "none", borderRadius: 8, padding: "9px 0", fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
@@ -4435,6 +4455,32 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             </div>
                           );
                         })()}
+
+                        {/* Remove from MY kid's schedule. Only shows for my own
+                            kid AND only when the kid actually has an enrollment
+                            on this camp (so the button is meaningful). Friends'
+                            enrollments are read-only. */}
+                        {gridPopover.person?.isMyKid && campStatus[gridPopover.camp.id]?.[gridPopover.person.id] && (
+                          <button
+                            onClick={async () => {
+                              const personName = gridPopover.person.name || "this kid";
+                              if (!window.confirm(`Remove ${gridPopover.camp.name} from ${personName}'s schedule?`)) return;
+                              await removeStatus(gridPopover.camp.id, gridPopover.person.id);
+                              setGridPopover(null);
+                            }}
+                            style={{
+                              marginTop: 10, width: "100%",
+                              background: "none", color: "#DC2626",
+                              border: "1.5px solid #FCA5A5", borderRadius: 8, padding: "8px 0",
+                              fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 12.5,
+                              cursor: "pointer", transition: "background 0.12s",
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
+                            onMouseLeave={e => e.currentTarget.style.background = "none"}
+                          >
+                            Remove from {gridPopover.person.name || "schedule"}
+                          </button>
+                        )}
 
                         <button
                           onClick={() => { setFocusedCampId(gridPopover.camp.id); setExpandedCampId(gridPopover.camp.id); setGridPopover(null); setActiveTab("camps"); }}
