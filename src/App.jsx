@@ -1236,16 +1236,32 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     })();
     const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
     let nextCampStart = null;
-    // Priority 1: my own kids' enrolled camps
+    // Priority 1: my own kids' enrolled camps. We want the EARLIEST FUTURE
+    // week the kid is signed up for, not the camp's overall start date —
+    // a long camp may have started months ago but the kid is only attending
+    // a few weeks in the middle. Pick from the enrollment's Weeks list.
     airtableKids.forEach(k => {
       allCampPool.forEach(camp => {
         const s = campStatus[camp.id]?.[k.id];
         if (!s) return;
         const statusVal = typeof s === "string" ? s : s?.status;
         if (statusVal !== "enrolled") return;
-        const end = camp.dateEnd || camp.dateStart;
-        if (!camp.dateStart || !end || end < todayIso) return;
-        if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+        const enrolledWeeks = (s && typeof s === "object" && Array.isArray(s.weeks)) ? s.weeks : [];
+        let earliestKidWeek = null;
+        if (enrolledWeeks.length > 0) {
+          // Pick the earliest Monday on or after today
+          for (const w of enrolledWeeks) {
+            const wEnd = (() => { const d = new Date(w + "T12:00:00"); d.setDate(d.getDate() + 6); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+            if (wEnd < todayIso) continue;
+            if (!earliestKidWeek || w < earliestKidWeek) earliestKidWeek = w;
+          }
+        } else {
+          // No weeks list — fall back to the camp's own window
+          const end = camp.dateEnd || camp.dateStart;
+          if (camp.dateStart && end && end >= todayIso) earliestKidWeek = camp.dateStart;
+        }
+        if (!earliestKidWeek) return;
+        if (!nextCampStart || earliestKidWeek < nextCampStart) nextCampStart = earliestKidWeek;
       });
     });
     // Priority 2: any circle member's enrolled camp
@@ -1257,9 +1273,20 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
             if (!camp) return;
             const status = m.campStatus?.[cid] || 'enrolled';
             if (status !== 'enrolled') return;
-            const end = camp.dateEnd || camp.dateStart;
-            if (!camp.dateStart || !end || end < todayIso) return;
-            if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+            const memberWeeks = m.campWeeks?.[cid] || [];
+            let earliestMemberWeek = null;
+            if (memberWeeks.length > 0) {
+              for (const w of memberWeeks) {
+                const wEnd = (() => { const d = new Date(w + "T12:00:00"); d.setDate(d.getDate() + 6); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+                if (wEnd < todayIso) continue;
+                if (!earliestMemberWeek || w < earliestMemberWeek) earliestMemberWeek = w;
+              }
+            } else {
+              const end = camp.dateEnd || camp.dateStart;
+              if (camp.dateStart && end && end >= todayIso) earliestMemberWeek = camp.dateStart;
+            }
+            if (!earliestMemberWeek) return;
+            if (!nextCampStart || earliestMemberWeek < nextCampStart) nextCampStart = earliestMemberWeek;
           });
         });
       });
@@ -1306,16 +1333,28 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     })();
     const allCampPool = [...camps, ...airtableCamps, ...dynamicCamps];
     let nextCampStart = null;
-    // Priority 1: my own kids' enrolled camps
+    // Priority 1: my own kids' enrolled weeks (NOT camp.dateStart — multi-week
+    // camps may have started months ago but the kid is only attending later weeks)
     airtableKids.forEach(k => {
       allCampPool.forEach(camp => {
         const s = campStatus[camp.id]?.[k.id];
         if (!s) return;
         const statusVal = typeof s === "string" ? s : s?.status;
         if (statusVal !== "enrolled") return;
-        const end = camp.dateEnd || camp.dateStart;
-        if (!camp.dateStart || !end || end < todayIso) return;
-        if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+        const enrolledWeeks = (s && typeof s === "object" && Array.isArray(s.weeks)) ? s.weeks : [];
+        let earliestKidWeek = null;
+        if (enrolledWeeks.length > 0) {
+          for (const w of enrolledWeeks) {
+            const wEnd = (() => { const d = new Date(w + "T12:00:00"); d.setDate(d.getDate() + 6); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+            if (wEnd < todayIso) continue;
+            if (!earliestKidWeek || w < earliestKidWeek) earliestKidWeek = w;
+          }
+        } else {
+          const end = camp.dateEnd || camp.dateStart;
+          if (camp.dateStart && end && end >= todayIso) earliestKidWeek = camp.dateStart;
+        }
+        if (!earliestKidWeek) return;
+        if (!nextCampStart || earliestKidWeek < nextCampStart) nextCampStart = earliestKidWeek;
       });
     });
     // Priority 2: any circle member's enrolled camp (so brand-new users still land near action)
@@ -1327,9 +1366,20 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
             if (!camp) return;
             const status = m.campStatus?.[cid] || 'enrolled';
             if (status !== 'enrolled') return;
-            const end = camp.dateEnd || camp.dateStart;
-            if (!camp.dateStart || !end || end < todayIso) return;
-            if (!nextCampStart || camp.dateStart < nextCampStart) nextCampStart = camp.dateStart;
+            const memberWeeks = m.campWeeks?.[cid] || [];
+            let earliestMemberWeek = null;
+            if (memberWeeks.length > 0) {
+              for (const w of memberWeeks) {
+                const wEnd = (() => { const d = new Date(w + "T12:00:00"); d.setDate(d.getDate() + 6); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+                if (wEnd < todayIso) continue;
+                if (!earliestMemberWeek || w < earliestMemberWeek) earliestMemberWeek = w;
+              }
+            } else {
+              const end = camp.dateEnd || camp.dateStart;
+              if (camp.dateStart && end && end >= todayIso) earliestMemberWeek = camp.dateStart;
+            }
+            if (!earliestMemberWeek) return;
+            if (!nextCampStart || earliestMemberWeek < nextCampStart) nextCampStart = earliestMemberWeek;
           });
         });
       });
@@ -3584,7 +3634,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                   cursor: "pointer",
                                 }}
                               >
-                                Remove from {personObj.name || "schedule"}
+                                Remove {personObj.name || "from schedule"}
                               </button>
                             )}
                             <button
@@ -4486,7 +4536,7 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                             onMouseEnter={e => e.currentTarget.style.background = "#FEF2F2"}
                             onMouseLeave={e => e.currentTarget.style.background = "none"}
                           >
-                            Remove from {gridPopover.person.name || "schedule"}
+                            Remove {gridPopover.person.name || "from schedule"}
                           </button>
                         )}
 
