@@ -3588,7 +3588,15 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                               </button>
                             )}
                             <button
-                              onClick={() => { setFocusedCampId(camp.id); setExpandedCampId(camp.id); setGridPopover(null); setActiveTab("camps"); }}
+                              onClick={() => {
+                                setCampsListSearch("");
+                                setCampTypeFilter(new Set());
+                                setAgeGradeFilter("");
+                                setFocusedCampId(camp.id);
+                                setExpandedCampId(camp.id);
+                                setGridPopover(null);
+                                setActiveTab("camps");
+                              }}
                               style={{ marginTop: 14, width: "100%", background: "#3D6B1F", color: "white", border: "none", borderRadius: 8, padding: "9px 0", fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                               View Full Camp Details →
                             </button>
@@ -4483,7 +4491,18 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                         )}
 
                         <button
-                          onClick={() => { setFocusedCampId(gridPopover.camp.id); setExpandedCampId(gridPopover.camp.id); setGridPopover(null); setActiveTab("camps"); }}
+                          onClick={() => {
+                            // Navigating to a specific camp shouldn't be hidden
+                            // behind an active search or filter — clear them so
+                            // the target camp is visible on the Camps tab.
+                            setCampsListSearch("");
+                            setCampTypeFilter(new Set());
+                            setAgeGradeFilter("");
+                            setFocusedCampId(gridPopover.camp.id);
+                            setExpandedCampId(gridPopover.camp.id);
+                            setGridPopover(null);
+                            setActiveTab("camps");
+                          }}
                           style={{
                             marginTop: 14, width: "100%", background: "#3D6B1F", color: "white",
                             border: "none", borderRadius: 8, padding: "9px 0",
