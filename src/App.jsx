@@ -88,6 +88,107 @@ const resolveStatusForWeek = (primaryStatus, thinkingWeeks, weekIso) => {
   if (Array.isArray(thinkingWeeks) && thinkingWeeks.includes(weekIso)) return "thinking";
   return primaryStatus || "enrolled";
 };
+
+// Build & trigger a download of an .ics calendar file for one kid's
+// enrollment. One VEVENT per enrolled week. Each event is all-day, spans
+// the days the kid is actually attending that week (Mon..Fri typical, but
+// honors a partial Days list), and includes hours/address/URL/care info.
+const downloadCampIcs = ({ camp, kidName, enrolledWeeks, days, beforeCare, afterCare }) => {
+  if (!camp || !enrolledWeeks || enrolledWeeks.length === 0) return;
+  const DAY_INDEX = { M: 0, T: 1, W: 2, Th: 3, F: 4, Sa: 5, Su: 6 };
+  // Days the kid attends within a week. Defaults to M–F if none specified.
+  const attendDays = (Array.isArray(days) && days.length > 0)
+    ? days.filter(d => d in DAY_INDEX)
+    : ["M","T","W","Th","F"];
+  if (attendDays.length === 0) return;
+  // Format date as YYYYMMDD (ICS DATE form, no separators).
+  const toIcsDate = (isoStr) => isoStr.replace(/-/g, "");
+  // Add `n` days to a Monday ISO string, return YYYY-MM-DD.
+  const addDays = (mondayIso, n) => {
+    const d = new Date(mondayIso + "T12:00:00");
+    d.setDate(d.getDate() + n);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const da = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${da}`;
+  };
+  // Escape per RFC 5545: backslashes, commas, semicolons, newlines.
+  const esc = (s = "") => String(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+  // Wrap long lines at 75 octets per RFC 5545; folded lines start with a space.
+  const fold = (line) => {
+    if (line.length <= 75) return line;
+    const chunks = [];
+    let s = line;
+    while (s.length > 75) { chunks.push(s.slice(0, 75)); s = s.slice(75); }
+    chunks.push(s);
+    return chunks.join("\r\n ");
+  };
+  const stamp = (() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+  })();
+  const title = camp.hours
+    ? `${camp.name} (${camp.hours})`
+    : camp.name;
+  const descParts = [];
+  if (beforeCare && camp.beforeCare) descParts.push(`☀ Before Care · ${camp.beforeCare}`);
+  else if (beforeCare) descParts.push("☀ Before Care");
+  if (afterCare && camp.afterCare) descParts.push(`🌙 After Care · ${camp.afterCare}`);
+  else if (afterCare) descParts.push("🌙 After Care");
+  if (camp.url) descParts.push(camp.url);
+  if (camp.notes) descParts.push(camp.notes);
+  const description = descParts.join("\n\n");
+  const events = enrolledWeeks.map(weekIso => {
+    // First attending day in this week
+    const attendIdxes = attendDays.map(d => DAY_INDEX[d]).sort((a, b) => a - b);
+    const firstIdx = attendIdxes[0];
+    const lastIdx = attendIdxes[attendIdxes.length - 1];
+    const startIso = addDays(weekIso, firstIdx);
+    // DTEND is exclusive for all-day events, so it's the day AFTER the last attended day.
+    const endIso = addDays(weekIso, lastIdx + 1);
+    const uid = `camplify-${camp.id}-${kidName.replace(/\s+/g, "")}-${weekIso}@camplify.app`;
+    const lines = [
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART;VALUE=DATE:${toIcsDate(startIso)}`,
+      `DTEND;VALUE=DATE:${toIcsDate(endIso)}`,
+      fold(`SUMMARY:${esc(title)}`),
+    ];
+    if (camp.address) lines.push(fold(`LOCATION:${esc(camp.address)}`));
+    else if (camp.location) lines.push(fold(`LOCATION:${esc(camp.location)}`));
+    if (description) lines.push(fold(`DESCRIPTION:${esc(description)}`));
+    if (camp.url) lines.push(fold(`URL:${esc(camp.url)}`));
+    lines.push("END:VEVENT");
+    return lines.join("\r\n");
+  }).join("\r\n");
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Camplify//EN",
+    "CALSCALE:GREGORIAN",
+    events,
+    "END:VCALENDAR",
+  ].join("\r\n");
+  // Trigger download. Sanitize filename.
+  const safeName = (camp.name || "camp").replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60);
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeName}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
+};
 const STATUS_CONFIG = {
   enrolled: { label: "Enrolled", bg: "#5a8f35", light: "#eef5e8" },
   thinking:  { label: "Interested", bg: "#D97706", light: "#FEF3C7" },
@@ -3617,6 +3718,40 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                                 </div>
                               );
                             })()}
+                            {/* Add to calendar (mobile). */}
+                            {personObj?.isMyKid && (() => {
+                              const enr = campStatus[camp.id]?.[personObj.id];
+                              if (!enr || typeof enr !== "object") return null;
+                              const weeks = Array.isArray(enr.weeks) ? enr.weeks : [];
+                              if (weeks.length === 0) return null;
+                              return (
+                                <button
+                                  onClick={() => {
+                                    downloadCampIcs({
+                                      camp,
+                                      kidName: personObj.name || "kid",
+                                      enrolledWeeks: weeks,
+                                      days: enr.days,
+                                      beforeCare: enr.beforeCare,
+                                      afterCare: enr.afterCare,
+                                    });
+                                  }}
+                                  style={{
+                                    marginTop: 10, width: "100%",
+                                    background: "none", color: "#3D6B1F",
+                                    border: "1.5px solid #3D6B1F", borderRadius: 8, padding: "8px 0",
+                                    fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 12.5,
+                                    cursor: "pointer",
+                                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                                  }}
+                                >
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                  </svg>
+                                  Add to calendar
+                                </button>
+                              );
+                            })()}
                             {/* Remove from MY kid's schedule (mobile). */}
                             {personObj?.isMyKid && campStatus[camp.id]?.[personObj.id] && (
                               <button
@@ -4514,10 +4649,46 @@ For "days": infer from the dates or any schedule info. If full week, use all 5. 
                           );
                         })()}
 
-                        {/* Remove from MY kid's schedule. Only shows for my own
-                            kid AND only when the kid actually has an enrollment
-                            on this camp (so the button is meaningful). Friends'
-                            enrollments are read-only. */}
+                        {/* Add to calendar — exports the kid's enrolled weeks
+                            as ICS. Only meaningful when the kid actually has
+                            an enrollment AND the camp has start dates. */}
+                        {gridPopover.person?.isMyKid && (() => {
+                          const enr = campStatus[gridPopover.camp.id]?.[gridPopover.person.id];
+                          if (!enr || typeof enr !== "object") return null;
+                          const weeks = Array.isArray(enr.weeks) ? enr.weeks : [];
+                          if (weeks.length === 0) return null;
+                          return (
+                            <button
+                              onClick={() => {
+                                downloadCampIcs({
+                                  camp: gridPopover.camp,
+                                  kidName: gridPopover.person.name || "kid",
+                                  enrolledWeeks: weeks,
+                                  days: enr.days,
+                                  beforeCare: enr.beforeCare,
+                                  afterCare: enr.afterCare,
+                                });
+                              }}
+                              style={{
+                                marginTop: 10, width: "100%",
+                                background: "none", color: "#3D6B1F",
+                                border: "1.5px solid #3D6B1F", borderRadius: 8, padding: "8px 0",
+                                fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 12.5,
+                                cursor: "pointer", transition: "background 0.12s",
+                                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = "#F0F9F1"}
+                              onMouseLeave={e => e.currentTarget.style.background = "none"}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                              </svg>
+                              Add to calendar
+                            </button>
+                          );
+                        })()}
+
+                        {/* Remove from MY kid's schedule. */}
                         {gridPopover.person?.isMyKid && campStatus[gridPopover.camp.id]?.[gridPopover.person.id] && (
                           <button
                             onClick={async () => {
