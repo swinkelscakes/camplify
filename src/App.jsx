@@ -140,7 +140,8 @@ const downloadCampIcs = ({ camp, kidName, enrolledWeeks, days, beforeCare, after
   else if (beforeCare) descParts.push("☀ Before Care");
   if (afterCare && camp.afterCare) descParts.push(`🌙 After Care · ${camp.afterCare}`);
   else if (afterCare) descParts.push("🌙 After Care");
-  if (camp.url) descParts.push(camp.url);
+  // NOTE: camp.url is emitted as a separate URL property below, not inside
+  // the description, so calendar apps don't render the link twice.
   if (camp.notes) descParts.push(camp.notes);
   const description = descParts.join("\n\n");
   const events = enrolledWeeks.map(weekIso => {
@@ -1295,11 +1296,20 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
     // Always show at least 52 weeks from today, extend further if camps go longer
     let latestDate = new Date(todayMonday + "T12:00:00");
     latestDate.setDate(latestDate.getDate() + 7 * 52);
+    // Walk back to cover past camps too — limited to a sane window so we
+    // don't render hundreds of dead weeks just because of one stray
+    // mis-dated camp. Default: 26 weeks before today (~half a year).
+    let earliestDate = new Date(todayMonday + "T12:00:00");
+    earliestDate.setDate(earliestDate.getDate() - 7 * 26);
     allCampPool.forEach(c => {
       const end = c.dateEnd || c.dateStart;
       if (end) {
         const d = new Date(end + "T12:00:00");
         if (d > latestDate) latestDate = d;
+      }
+      if (c.dateStart) {
+        const d = new Date(c.dateStart + "T12:00:00");
+        if (d < earliestDate) earliestDate = d;
       }
     });
     const toLocalIso = (d) => {
@@ -1308,10 +1318,13 @@ function Camplify({ userId, userName, userEmail, pendingInviteCode }) {
       const day = String(d.getDate()).padStart(2, "0");
       return `${y}-${m}-${day}`;
     };
-    // Generate every week from today through latest date
+    // Snap earliestDate to its Monday before generating.
+    const earliestDow = earliestDate.getDay();
+    earliestDate.setDate(earliestDate.getDate() - (earliestDow === 0 ? 6 : earliestDow - 1));
+    // Generate every week from earliest through latest date
     const weeks = [];
     const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    const cur = new Date(todayMonday + "T12:00:00");
+    const cur = new Date(earliestDate);
     while (cur <= latestDate) {
       const iso = toLocalIso(cur);
       const fri = new Date(cur); fri.setDate(fri.getDate() + 4);
